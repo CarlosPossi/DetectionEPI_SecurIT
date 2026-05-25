@@ -37,9 +37,7 @@ type Props = {
 
 export function EpiDatasetDrawer({ trigger }: Props) {
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(
-    new Set(["helmet", "vest", "boots"]),
-  );
+  const [selected, setSelected] = useState<Set<string>>(new Set(["helmet", "vest", "boots"]));
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -99,9 +97,7 @@ export function EpiDatasetDrawer({ trigger }: Props) {
           "w-[min(92vw,440px)] max-h-[85vh] flex flex-col",
           "bg-card text-card-foreground rounded-2xl border border-border shadow-2xl",
           "transition-all duration-200",
-          open
-            ? "opacity-100 scale-100"
-            : "opacity-0 scale-95 pointer-events-none",
+          open ? "opacity-100 scale-100" : "opacity-0 scale-95 pointer-events-none",
         )}
       >
         <header className="flex items-start justify-between px-6 py-5 border-b border-border">
@@ -153,9 +149,7 @@ export function EpiDatasetDrawer({ trigger }: Props) {
                 <span
                   className={cn(
                     "text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full",
-                    active
-                      ? "bg-primary/15 text-primary"
-                      : "bg-muted text-muted-foreground",
+                    active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
                   )}
                 >
                   {active ? "Ativo" : "Inativo"}

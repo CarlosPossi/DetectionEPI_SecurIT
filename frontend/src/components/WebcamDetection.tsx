@@ -35,7 +35,7 @@ export default function WebcamDetection({ onDetections }: Props) {
 
       setFrameSize({
         width: data.width,
-        height: data.height
+        height: data.height,
       });
     };
 
@@ -59,7 +59,7 @@ export default function WebcamDetection({ onDetections }: Props) {
     const img = webcamRef.current?.getScreenshot();
     if (!img) return;
 
-    const blob = await fetch(img).then(r => r.blob());
+    const blob = await fetch(img).then((r) => r.blob());
     socket.emit("frame", blob);
   };
 
@@ -84,7 +84,7 @@ export default function WebcamDetection({ onDetections }: Props) {
             const scaleX = canvas.width / frameSize.width;
             const scaleY = canvas.height / frameSize.height;
 
-            detections.forEach(d => {
+            detections.forEach((d) => {
               let [x1, y1, x2, y2] = d.box;
 
               x1 *= scaleX;
