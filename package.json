@@ -1,0 +1,18 @@
+{
+  "name": "deteccaoepi",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run front\" \"npm run back\"",
+    "front": "cd frontend && npm run dev",
+    "back": "cd backend && ../venv/bin/python app.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
