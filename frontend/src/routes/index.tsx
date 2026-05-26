@@ -67,13 +67,20 @@ function Index() {
     (id: string) => {
       return detections.some((d) => {
         const label = norm(d.label);
+        const hasNo = label.includes("no_") || label.includes("sem_");
+        
         if (id === "helmet")
-          return (label.includes("capacete") || label.includes("helmet")) && !label.includes("no_");
-        if (id === "vest") return label.includes("macacao") || label.includes("vest");
-        if (id === "mask") return label.includes("mascara") || label.includes("mask");
-        if (id === "glasses") return label.includes("oculos") || label.includes("glasses");
-        if (id === "gloves") return label.includes("luva") || label.includes("glove");
-        if (id === "boots") return label.includes("bota") || label.includes("boot");
+          return (label.includes("capacete") || label.includes("helmet")) && !hasNo;
+        if (id === "vest") 
+          return (label.includes("macacao") || label.includes("vest") || label.includes("colete")) && !hasNo;
+        if (id === "mask") 
+          return (label.includes("mascara") || label.includes("mask")) && !hasNo;
+        if (id === "glasses") 
+          return (label.includes("oculos") || label.includes("glasses")) && !hasNo;
+        if (id === "gloves") 
+          return (label.includes("luva") || label.includes("glove")) && !hasNo;
+        if (id === "boots") 
+          return (label.includes("bota") || label.includes("boot")) && !hasNo;
         return false;
       });
     },
@@ -238,8 +245,8 @@ function Index() {
       setHistory((prev) => [...prev, currentEpiStatus]);
 
       const isOk = Object.values(currentEpiStatus).every(v => v);
-      // Captura snapshot se houver erro e ainda não tivermos um
-      if (!isOk && !violationSnapshotRef.current) {
+      // Sempre captura o snapshot mais recente da violação para garantir que a imagem enviada seja a correta
+      if (!isOk) {
         const snap = webcamHandleRef.current?.getScreenshot();
         if (snap) violationSnapshotRef.current = snap;
       }
