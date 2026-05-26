@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useImperativeHandle, forwardRef } from "react";
 import Webcam from "react-webcam";
 import { io } from "socket.io-client";
 
@@ -20,9 +20,17 @@ type Props = {
   onDetections?: (detections: Detection[]) => void;
 };
 
-export default function WebcamDetection({ onDetections }: Props) {
+export type WebcamDetectionHandle = {
+  getScreenshot: () => string | null | undefined;
+};
+
+const WebcamDetection = forwardRef<WebcamDetectionHandle, Props>(({ onDetections }, ref) => {
   const webcamRef = useRef<Webcam | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    getScreenshot: () => webcamRef.current?.getScreenshot(),
+  }));
 
   const [detections, setDetections] = useState<Detection[]>([]);
   const [frameSize, setFrameSize] = useState({ width: 1, height: 1 });
@@ -134,4 +142,6 @@ export default function WebcamDetection({ onDetections }: Props) {
       <canvas ref={canvasRef} className="absolute w-full h-full" />
     </div>
   );
-}
+});
+
+export default WebcamDetection;

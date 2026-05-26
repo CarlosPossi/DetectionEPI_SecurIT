@@ -3,7 +3,7 @@ import { Camera, UserCheck, Loader2 } from "lucide-react";
 import WebcamDetection from "@/components/WebcamDetection";
 
 interface FacialLoginProps {
-  onSuccess: (userId: string, userName: string) => void;
+  onSuccess: () => void;
 }
 
 export function FacialLogin({ onSuccess }: FacialLoginProps) {
@@ -18,12 +18,13 @@ export function FacialLogin({ onSuccess }: FacialLoginProps) {
 
       // Simula um pequeno delay após identificar para mostrar o feedback
       setTimeout(() => {
-        onSuccess("EMP-001", "Carlos Rodriguez");
+        onSuccess();
       }, 1500);
     }, 4000);
 
     return () => clearTimeout(timer);
   }, [onSuccess]);
+
 
   return (
     <div className="flex flex-col items-center justify-center space-y-6 py-10">

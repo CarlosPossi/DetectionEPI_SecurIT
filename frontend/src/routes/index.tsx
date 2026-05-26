@@ -9,13 +9,16 @@ import {
   CheckCircle2,
   AlertCircle,
   Timer,
+  XCircle,
+  BadgeCheck
 } from "lucide-react";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { FacialLogin } from "@/components/terminal/FacialLogin";
+import { EmployeeSelection } from "@/components/terminal/EmployeeSelection";
 import { EpiSelection } from "@/components/terminal/EpiSelection";
 import { LocationRegistration } from "@/components/terminal/LocationRegistration";
-import WebcamDetection from "@/components/WebcamDetection";
+import WebcamDetection, { WebcamDetectionHandle } from "@/components/WebcamDetection";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
@@ -25,7 +28,7 @@ type Detection = {
   conf: number;
 };
 
-type TerminalStep = "login" | "epi-setup" | "location" | "monitoring";
+type TerminalStep = "login" | "employee-select" | "epi-setup" | "location" | "monitoring";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -39,66 +42,13 @@ function Index() {
   const [location, setLocation] = useState("");
   const [checkInTime, setCheckInTime] = useState("");
 
+  const webcamHandleRef = useRef<WebcamDetectionHandle>(null);
+  const violationSnapshotRef = useRef<string | null>(null);
+
   // Lógica de Média de 1 Minuto
   const [monitoringProgress, setMonitoringProgress] = useState(0);
-  const [history, setHistory] = useState<boolean[]>([]);
-
-  const calculateFinalAverage = useCallback(() => {
-    const complianceRate = history.filter((v) => v).length / history.length;
-    const isCompliant = complianceRate > 0.8; // 80% de presença
-
-    if (isCompliant) {
-      toast.success("Média de 1 min concluída: Conformidade OK!", {
-        description: "Dados enviados para o SPI_Challenge.",
-      });
-    } else {
-      toast.error("Alerta Crítico!", {
-        description: "Baixa conformidade detectada na média do último minuto.",
-      });
-    }
-    // Reinicia o ciclo de monitoramento
-    setMonitoringProgress(0);
-    setHistory([]);
-  }, [history]);
-
-  useEffect(() => {
-    if (step === "monitoring") {
-      const interval = setInterval(() => {
-        setMonitoringProgress((prev) => {
-          if (prev >= 100) {
-            calculateFinalAverage();
-            return 100;
-          }
-          return prev + 1.66; // Simula 60 segundos (100 / 60)
-        });
-      }, 1000);
-
-      return () => clearInterval(interval);
-    }
-  }, [step, calculateFinalAverage]);
-
-  const handleLoginSuccess = (id: string, name: string) => {
-    setUserData({ id, name });
-    setCheckInTime(
-      new Date().toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    );
-    setStep("epi-setup");
-    toast.success(`Acesso identificado: ${name}`);
-  };
-
-  const handleEpiConfirm = (epis: string[]) => {
-    setSelectedEpis(epis);
-    setStep("location");
-  };
-
-  const handleLocationConfirm = (loc: string) => {
-    setLocation(loc);
-    setStep("monitoring");
-    toast.info("Iniciando monitoramento de 1 minuto...");
-  };
+  const [history, setHistory] = useState<Record<string, boolean>[]>([]);
+  const [totalSeconds, setTotalSeconds] = useState(0);
 
   const restart = () => {
     setStep("login");
@@ -107,6 +57,8 @@ function Index() {
     setLocation("");
     setMonitoringProgress(0);
     setHistory([]);
+    setTotalSeconds(0);
+    violationSnapshotRef.current = null;
   };
 
   // Verificação de conformidade em tempo real
@@ -128,13 +80,171 @@ function Index() {
     [detections],
   );
 
-  // Registra histórico para a média
+  const calculateFinalAverage = useCallback(async () => {
+    if (history.length === 0) return;
+
+    // Calcula média individual por EPI
+    const epiAverages: Record<string, number> = {};
+    selectedEpis.forEach(epi => {
+      const okCount = history.filter(h => h[epi]).length;
+      epiAverages[epi] = okCount / history.length;
+    });
+
+    const overallCompliance = history.filter(h => Object.values(h).every(v => v)).length / history.length;
+    const isRiskArea = location.includes("Perigo");
+    const isCompliant = overallCompliance >= 0.5 && !isRiskArea;
+
+    const episOk = selectedEpis.filter(epi => epiAverages[epi] >= 0.5);
+    const episMissing = selectedEpis.filter(epi => epiAverages[epi] < 0.5);
+
+    const alerts = [];
+    if (overallCompliance < 0.5) alerts.push(`Baixa conformidade detectada (${Math.round(overallCompliance * 100)}%)`);
+    if (isRiskArea) alerts.push("🚨 ACESSO NÃO AUTORIZADO: Área de Alto Risco!");
+    episMissing.forEach(epi => alerts.push(`Uso insuficiente de ${epi}`));
+
+    try {
+      await fetch('http://localhost:3000/api/detection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeName: userData.name,
+          location: location,
+          status: isCompliant ? 'ok' : 'danger',
+          compliance: overallCompliance * 100,
+          episOk,
+          episMissing,
+          alerts: alerts,
+          images: !isCompliant && violationSnapshotRef.current ? [violationSnapshotRef.current] : []
+        })
+      });
+
+      if (isCompliant) {
+        toast.success("Monitoramento concluído: Seguro!", { description: "Dados detalhados enviados." });
+      } else {
+        toast.error("Alerta Crítico Enviado!", { description: "Violação de segurança detectada." });
+      }
+    } catch (error) {
+      console.error("Erro ao enviar:", error);
+    }
+
+    setMonitoringProgress(0);
+    setHistory([]);
+    violationSnapshotRef.current = null;
+  }, [history, userData.name, location, selectedEpis, getEpiStatus]);
+
+  useEffect(() => {
+    if (step === "monitoring") {
+      const interval = setInterval(() => {
+        setMonitoringProgress((prev) => {
+          if (prev >= 100) return 0;
+          return prev + 1.66;
+        });
+        setTotalSeconds(prev => prev + 1);
+      }, 1000);
+
+      return () => clearInterval(interval);
+    }
+  }, [step]);
+
+  const formatTotalTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return [h, m, s].map(v => v.toString().padStart(2, '0')).join(':');
+  };
+
+  useEffect(() => {
+    if (monitoringProgress >= 100) {
+      calculateFinalAverage();
+    }
+  }, [monitoringProgress, calculateFinalAverage]);
+
+  const handleLoginSuccess = () => {
+    setStep("employee-select");
+    toast.success(`Face identificada!`);
+  };
+
+  const handleEmployeeSelect = (emp: { id: string, name: string }) => {
+    setUserData({ id: emp.id, name: emp.name });
+    setStep("epi-setup");
+    toast.success(`Acesso identificado: ${emp.name}`);
+  };
+
+  const handleEpiConfirm = (epis: string[]) => {
+    setSelectedEpis(epis);
+    setStep("location");
+  };
+
+  const handleLocationConfirm = async (loc: string) => {
+    setLocation(loc);
+    const now = new Date().toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    setCheckInTime(now);
+    setStep("monitoring");
+    toast.info("Iniciando monitoramento de 1 minuto...");
+
+    // 🔥 Envio imediato do Check-in para o Dashboard
+    console.log("📤 Enviando Check-in:", { employeeName: userData.name, location: loc, checkIn: now });
+    try {
+      await fetch('http://localhost:3000/api/detection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeName: userData.name,
+          location: loc,
+          status: 'ok', 
+          compliance: 100, 
+          checkIn: now,
+          alerts: [],
+          images: []
+        })
+      });
+      console.log("✅ Check-in enviado com sucesso");
+    } catch (error) {
+      console.error("❌ Falha ao enviar Check-in:", error);
+    }
+  };
+
+  const handleEndSession = async () => {
+    try {
+      await fetch('http://localhost:3000/api/detection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeName: userData.name,
+          status: 'offline', 
+          location: "Pendente",
+          alerts: [],
+          images: []
+        })
+      });
+      toast.success("Sessão encerrada com sucesso.");
+      restart();
+    } catch (error) {
+      console.error("Erro ao encerrar sessão:", error);
+    }
+  };
+
+  // Registra histórico para a média e captura snapshot de erro
   useEffect(() => {
     if (step === "monitoring" && selectedEpis.length > 0) {
-      const isOk = selectedEpis.every((epi) => getEpiStatus(epi));
-      setHistory((prev) => [...prev, isOk]);
+      const currentEpiStatus: Record<string, boolean> = {};
+      selectedEpis.forEach(epi => {
+        currentEpiStatus[epi] = getEpiStatus(epi);
+      });
+
+      setHistory((prev) => [...prev, currentEpiStatus]);
+
+      const isOk = Object.values(currentEpiStatus).every(v => v);
+      // Captura snapshot se houver erro e ainda não tivermos um
+      if (!isOk && !violationSnapshotRef.current) {
+        const snap = webcamHandleRef.current?.getScreenshot();
+        if (snap) violationSnapshotRef.current = snap;
+      }
     }
-  }, [step, selectedEpis, getEpiStatus]);
+  }, [step, selectedEpis, getEpiStatus, detections]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -181,6 +291,10 @@ function Index() {
           <div className="p-8 min-h-[500px]">
             {step === "login" && <FacialLogin onSuccess={handleLoginSuccess} />}
 
+            {step === "employee-select" && (
+              <EmployeeSelection onSelect={handleEmployeeSelect} />
+            )}
+
             {step === "epi-setup" && (
               <EpiSelection userName={userData.name} onConfirm={handleEpiConfirm} />
             )}
@@ -192,7 +306,7 @@ function Index() {
                 {/* Visualização da Câmera */}
                 <div className="space-y-4">
                   <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl border-4 border-border bg-black shadow-inner">
-                    <WebcamDetection onDetections={setDetections} />
+                    <WebcamDetection ref={webcamHandleRef} onDetections={setDetections} />
                   </div>
                   <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-xl border">
                     <Timer className="h-5 w-5 text-primary" />
@@ -240,7 +354,7 @@ function Index() {
                           className="flex items-center justify-between p-3 bg-muted/40 rounded-xl border border-border"
                         >
                           <span className="font-semibold capitalize">
-                            {id === "helmet" ? "Capacete" : id === "vest" ? "Colete" : id}
+                            {id === "helmet" ? "Capacete" : id === "vest" ? "Colete" : id === "gloves" ? "Luvas" : id === "glasses" ? "Óculos" : id === "boots" ? "Botas" : id}
                           </span>
                           {getEpiStatus(id) ? (
                             <BadgeCheck className="h-5 w-5 text-success" />
@@ -261,7 +375,7 @@ function Index() {
                     <div className="p-4 bg-muted/20 rounded-xl border border-border text-center">
                       <Timer className="h-4 w-4 mx-auto mb-2 text-muted-foreground" />
                       <p className="text-[10px] uppercase text-muted-foreground">Tempo Total</p>
-                      <p className="font-bold">00:02:15</p>
+                      <p className="font-bold">{formatTotalTime(totalSeconds)}</p>
                     </div>
                   </div>
                 </div>
@@ -274,37 +388,27 @@ function Index() {
             <div className="text-xs text-muted-foreground">
               ID Terminal: <span className="font-mono">T-SA-04-26</span>
             </div>
-            <button
-              onClick={restart}
-              className="flex items-center gap-2 text-sm font-bold text-muted-foreground hover:text-primary transition-colors"
-            >
-              <RotateCcw className="h-4 w-4" />
-              Reiniciar Sessão
-            </button>
+            <div className="flex gap-4">
+              {step === "monitoring" && (
+                <button
+                  onClick={handleEndSession}
+                  className="flex items-center gap-2 text-sm font-bold text-danger hover:opacity-80 transition-colors"
+                >
+                  <XCircle className="h-4 w-4" />
+                  Encerrar Sessão
+                </button>
+              )}
+              <button
+                onClick={restart}
+                className="flex items-center gap-2 text-sm font-bold text-muted-foreground hover:text-primary transition-colors"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Reiniciar
+              </button>
+            </div>
           </footer>
         </div>
       </div>
-    </div>
-  );
-}
-
-// Subcomponente de Badge pra simplificar
-function BadgeCheck({ className }: { className?: string }) {
-  return (
-    <div
-      className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 border border-success/30 text-success text-[10px] font-black uppercase ${className}`}
-    >
-      <CheckCircle2 className="h-3 w-3" /> OK
-    </div>
-  );
-}
-
-function XCircle({ className }: { className?: string }) {
-  return (
-    <div
-      className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-danger/10 border border-danger/30 text-danger text-[10px] font-black uppercase ${className}`}
-    >
-      <AlertCircle className="h-3 w-3" /> Ausente
     </div>
   );
 }
