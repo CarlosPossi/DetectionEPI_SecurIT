@@ -14,7 +14,7 @@ type DetectionResponse = {
   height: number;
 };
 
-const socket = io("http://127.0.0.1:5001");
+export const socket = io("http://127.0.0.1:5001");
 
 type Props = {
   onDetections?: (detections: Detection[]) => void;

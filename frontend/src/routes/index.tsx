@@ -14,8 +14,10 @@ import {
 } from "lucide-react";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { TerminalEntry } from "@/components/terminal/TerminalEntry";
 import { FacialLogin } from "@/components/terminal/FacialLogin";
 import { EmployeeSelection } from "@/components/terminal/EmployeeSelection";
+import { FaceRegistration } from "@/components/terminal/FaceRegistration";
 import { EpiSelection } from "@/components/terminal/EpiSelection";
 import { LocationRegistration } from "@/components/terminal/LocationRegistration";
 import WebcamDetection, { WebcamDetectionHandle } from "@/components/WebcamDetection";
@@ -28,16 +30,17 @@ type Detection = {
   conf: number;
 };
 
-type TerminalStep = "login" | "employee-select" | "epi-setup" | "location" | "monitoring";
+type TerminalStep = "entry" | "login" | "employee-select" | "face-registration" | "epi-setup" | "location" | "monitoring";
 
 export const Route = createFileRoute("/")({
   component: Index,
 });
 
 function Index() {
-  const [step, setStep] = useState<TerminalStep>("login");
+  const [step, setStep] = useState<TerminalStep>("entry");
   const [detections, setDetections] = useState<Detection[]>([]);
   const [userData, setUserData] = useState({ id: "", name: "" });
+  const [isManualSelection, setIsManualSelection] = useState(false);
   const [selectedEpis, setSelectedEpis] = useState<string[]>([]);
   const [location, setLocation] = useState("");
   const [checkInTime, setCheckInTime] = useState("");
@@ -50,8 +53,27 @@ function Index() {
   const [history, setHistory] = useState<Record<string, boolean>[]>([]);
   const [totalSeconds, setTotalSeconds] = useState(0);
 
-  const restart = () => {
-    setStep("login");
+  const restart = async () => {
+    // 🔥 Se houver um usuário logado, envia o logout automático antes de reiniciar
+    if (userData.name) {
+      try {
+        await fetch("http://localhost:3000/api/detection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            employeeName: userData.name,
+            status: "offline",
+            location: "Pendente",
+            alerts: [],
+            images: [],
+          }),
+        });
+      } catch (error) {
+        console.error("Erro ao deslogar automaticamente no restart:", error);
+      }
+    }
+
+    setStep("entry");
     setUserData({ id: "", name: "" });
     setSelectedEpis([]);
     setLocation("");
@@ -80,7 +102,7 @@ function Index() {
         if (id === "gloves") 
           return (label.includes("luva") || label.includes("glove")) && !hasNo;
         if (id === "boots") 
-          return (label.includes("bota") || label.includes("boot")) && !hasNo;
+          return (label.includes("bota") || label.includes("boot") || label.includes("sapato")) && !hasNo;
         return false;
       });
     },
@@ -166,15 +188,64 @@ function Index() {
     }
   }, [monitoringProgress, calculateFinalAverage]);
 
-  const handleLoginSuccess = () => {
-    setStep("employee-select");
-    toast.success(`Face identificada!`);
+  const handleLoginStart = () => {
+    setStep("login");
   };
 
-  const handleEmployeeSelect = (emp: { id: string, name: string }) => {
+  const handleRegisterStart = () => {
+    setStep("face-registration");
+  };
+
+  const handleLoginSuccess = (user?: { id: string, name: string }) => {
+    if (user) {
+      setUserData({ id: user.id, name: user.name });
+      setStep("epi-setup");
+      toast.success(`Acesso identificado: ${user.name}`);
+    } else {
+      toast.error("Rosto não reconhecido. Por favor, realize o cadastro.");
+      setStep("entry");
+    }
+  };
+
+  const handleRegistrationFaceCaptured = (imageBlob: Blob) => {
+    // We store the captured face blob temporarily and move to employee selection
+    (window as any).tempFaceBlob = imageBlob;
+    setStep("employee-select");
+    toast.info("Agora selecione seu perfil para vincular o cadastro.");
+  };
+
+  const handleEmployeeSelect = async (emp: { id: string, name: string }) => {
     setUserData({ id: emp.id, name: emp.name });
+    
+    const faceBlob = (window as any).tempFaceBlob;
+    if (faceBlob) {
+      // Perform the actual linking now
+      toast.loading("Vinculando biometria ao perfil...");
+      try {
+        const { socket } = await import("@/components/WebcamDetection");
+        
+        const registrationPromise = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject("Tempo esgotado"), 10000);
+          socket.once("registration_result", (data: any) => {
+            clearTimeout(timeout);
+            if (data.status === "success") resolve(data);
+            else reject(data.message || "Erro no servidor");
+          });
+        });
+
+        socket.emit("register_face", { image: faceBlob, employeeId: emp.id });
+        await registrationPromise;
+        
+        toast.dismiss();
+        toast.success(`Cadastro facial concluído para ${emp.name}`);
+        delete (window as any).tempFaceBlob;
+      } catch (error) {
+        toast.dismiss();
+        toast.error(`Erro ao salvar cadastro: ${error}`);
+      }
+    }
+
     setStep("epi-setup");
-    toast.success(`Acesso identificado: ${emp.name}`);
   };
 
   const handleEpiConfirm = (epis: string[]) => {
@@ -296,10 +367,22 @@ function Index() {
 
           {/* MAIN CONTENT AREA */}
           <div className="p-8 min-h-[500px]">
+            {step === "entry" && (
+              <TerminalEntry onLogin={handleLoginStart} onRegister={handleRegisterStart} />
+            )}
+
             {step === "login" && <FacialLogin onSuccess={handleLoginSuccess} />}
 
             {step === "employee-select" && (
               <EmployeeSelection onSelect={handleEmployeeSelect} />
+            )}
+
+            {step === "face-registration" && (
+              <FaceRegistration 
+                employeeId={userData.id} 
+                employeeName={userData.name} 
+                onComplete={handleRegistrationFaceCaptured} 
+              />
             )}
 
             {step === "epi-setup" && (
