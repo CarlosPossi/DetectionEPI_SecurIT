@@ -141,7 +141,8 @@ def handle_identify_face(data):
                 "status": "success",
                 "user": {
                     "id": best_match["id"],
-                    "name": best_match["name"]
+                    "name": best_match["name"],
+                    "requiredEPIs": best_match.get("requiredEPIs", [])
                 }
             })
         else:

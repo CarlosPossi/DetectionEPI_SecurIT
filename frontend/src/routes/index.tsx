@@ -196,11 +196,19 @@ function Index() {
     setStep("face-registration");
   };
 
-  const handleLoginSuccess = (user?: { id: string, name: string }) => {
+  const handleLoginSuccess = (user?: { id: string, name: string, requiredEPIs?: string[] }) => {
     if (user) {
       setUserData({ id: user.id, name: user.name });
-      setStep("epi-setup");
-      toast.success(`Acesso identificado: ${user.name}`);
+      
+      if (user.requiredEPIs && user.requiredEPIs.length > 0) {
+        setSelectedEpis(user.requiredEPIs);
+        setStep("location");
+        toast.success(`Acesso identificado: ${user.name}`);
+        toast.info(`EPIs configurados automaticamente.`);
+      } else {
+        setStep("epi-setup");
+        toast.success(`Acesso identificado: ${user.name}`);
+      }
     } else {
       toast.error("Rosto não reconhecido. Por favor, realize o cadastro.");
       setStep("entry");
@@ -214,7 +222,7 @@ function Index() {
     toast.info("Agora selecione seu perfil para vincular o cadastro.");
   };
 
-  const handleEmployeeSelect = async (emp: { id: string, name: string }) => {
+  const handleEmployeeSelect = async (emp: { id: string, name: string, requiredEPIs?: string[] }) => {
     setUserData({ id: emp.id, name: emp.name });
     
     const faceBlob = (window as any).tempFaceBlob;
@@ -245,7 +253,13 @@ function Index() {
       }
     }
 
-    setStep("epi-setup");
+    if (emp.requiredEPIs && emp.requiredEPIs.length > 0) {
+        setSelectedEpis(emp.requiredEPIs);
+        setStep("location");
+        toast.info(`EPIs configurados automaticamente.`);
+    } else {
+        setStep("epi-setup");
+    }
   };
 
   const handleEpiConfirm = (epis: string[]) => {

@@ -7,6 +7,7 @@ interface Employee {
   id: string;
   name: string;
   role: string;
+  requiredEPIs?: string[];
 }
 
 interface EmployeeSelectionProps {

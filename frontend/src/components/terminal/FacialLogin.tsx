@@ -4,7 +4,7 @@ import WebcamDetection, { socket, WebcamDetectionHandle } from "@/components/Web
 import { Button } from "@/components/ui/button";
 
 interface FacialLoginProps {
-  onSuccess: (user?: { id: string, name: string }) => void;
+  onSuccess: (user?: { id: string, name: string, requiredEPIs?: string[] }) => void;
 }
 
 export function FacialLogin({ onSuccess }: FacialLoginProps) {
@@ -16,7 +16,7 @@ export function FacialLogin({ onSuccess }: FacialLoginProps) {
   const [guidance, setGuidance] = useState("Centralize seu rosto");
 
   useEffect(() => {
-    const handleResult = (data: { status: string, user?: { id: string, name: string }, message?: string }) => {
+    const handleResult = (data: { status: string, user?: { id: string, name: string, requiredEPIs?: string[] }, message?: string }) => {
       console.log("Identification result:", data);
       
       if (data.status === "no_face") {
@@ -96,24 +96,15 @@ export function FacialLogin({ onSuccess }: FacialLoginProps) {
         </p>
 
         <div className="flex flex-col gap-3 pt-4">
-          <Button 
-            variant="outline"
-            onClick={() => onSuccess()}
-            className="w-full py-6 text-lg font-bold rounded-xl border-2 border-primary/20 hover:bg-primary/5 text-foreground bg-card"
-          >
-            <Search className="mr-2 h-5 w-5" />
-            Selecionar Perfil Manualmente
-          </Button>
-          
           {isUnknown && (
             <Button 
-              variant="ghost"
+              variant="outline"
               onClick={() => {
                 setIsUnknown(false);
                 setAttempts(0);
                 setStatus("Escaneando rosto...");
               }}
-              className="text-xs text-muted-foreground hover:bg-transparent"
+              className="w-full py-6 text-lg font-bold rounded-xl border-2 border-primary/20 hover:bg-primary/5 text-foreground bg-card"
             >
               Tentar novamente
             </Button>
