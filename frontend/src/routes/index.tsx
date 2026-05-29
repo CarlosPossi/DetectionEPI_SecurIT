@@ -159,13 +159,13 @@ function Index() {
     setMonitoringProgress(0);
     setHistory([]);
     violationSnapshotRef.current = null;
-  }, [history, userData.name, location, selectedEpis, getEpiStatus]);
+  }, [history, userData.name, location, selectedEpis]);
 
   useEffect(() => {
     if (step === "monitoring") {
       const interval = setInterval(() => {
         setMonitoringProgress((prev) => {
-          if (prev >= 100) return 0;
+          if (prev >= 100) return 100; // Mantém em 100 para o useEffect capturar
           return prev + 1.66;
         });
         setTotalSeconds(prev => prev + 1);
@@ -184,6 +184,7 @@ function Index() {
 
   useEffect(() => {
     if (monitoringProgress >= 100) {
+      setMonitoringProgress(0); // Reseta IMEDIATAMENTE para evitar disparos duplicados em re-renders
       calculateFinalAverage();
     }
   }, [monitoringProgress, calculateFinalAverage]);
