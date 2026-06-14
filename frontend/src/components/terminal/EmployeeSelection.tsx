@@ -12,9 +12,10 @@ interface Employee {
 
 interface EmployeeSelectionProps {
   onSelect: (employee: Employee) => void;
+  unregisteredOnly?: boolean;
 }
 
-export function EmployeeSelection({ onSelect }: EmployeeSelectionProps) {
+export function EmployeeSelection({ onSelect, unregisteredOnly = false }: EmployeeSelectionProps) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -23,7 +24,8 @@ export function EmployeeSelection({ onSelect }: EmployeeSelectionProps) {
     async function loadEmployees() {
       try {
         const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:5001";
-        const res = await fetch(`${SPI_API_URL}/api/employees`);
+        const url = `${SPI_API_URL}/api/employees${unregisteredOnly ? "?unregistered=true" : ""}`;
+        const res = await fetch(url);
         const data = await res.json();
         setEmployees(data);
       } catch (e) {
@@ -33,7 +35,7 @@ export function EmployeeSelection({ onSelect }: EmployeeSelectionProps) {
       }
     }
     loadEmployees();
-  }, []);
+  }, [unregisteredOnly]);
 
   const filtered = employees.filter((e) =>
     e.name.toLowerCase().includes(search.toLowerCase())

@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from flask_socketio import SocketIO
 from ultralytics import YOLO
 import cv2
@@ -14,6 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(BASE_DIR, "deteccaoepi.pt")
@@ -38,7 +40,7 @@ def cosine_distance(a, b):
 
 def get_employees():
     try:
-        employees = list(db.Employee.find({}))
+        employees = list(db["Employee"].find({}))
         return [serialize_doc(e) for e in employees]
     except Exception as e:
         print(f"Error fetching employees from DB: {e}")
@@ -46,7 +48,7 @@ def get_employees():
 
 def update_employee_face(employee_id, encoding):
     try:
-        result = db.Employee.update_one(
+        result = db["Employee"].update_one(
             {"_id": ObjectId(employee_id)},
             {"$set": {"faceEncoding": json.dumps(encoding)}}
         )
@@ -61,7 +63,22 @@ def index():
 
 @app.route("/api/employees", methods=["GET"])
 def api_get_employees():
-    return jsonify(get_employees())
+    unregistered_only = request.args.get("unregistered") == "true"
+    print(f"DEBUG: GET /api/employees - unregistered_only: {unregistered_only}")
+    try:
+        query = {}
+        if unregistered_only:
+            query = {"$or": [{"faceEncoding": {"$exists": False}}, {"faceEncoding": None}, {"faceEncoding": ""}]}
+        
+        print(f"DEBUG: Query: {query}")
+        employees = list(db["Employee"].find(query))
+        print(f"DEBUG: Found {len(employees)} employees")
+        
+        serialized = [serialize_doc(e) for e in employees]
+        return jsonify(serialized)
+    except Exception as e:
+        print(f"ERROR fetching employees: {e}")
+        return jsonify([]), 500
 
 @app.route("/api/detection", methods=["POST"])
 def handle_detection():
@@ -85,7 +102,7 @@ def handle_detection():
             
             # Deduplicação (10 segundos)
             ten_seconds_ago = datetime.utcnow().timestamp() - 10
-            existing_alert = db.Alert.find_one({
+            existing_alert = db["Alert"].find_one({
                 "title": alert_title,
                 "location": location or "Terminal",
                 "createdAt": {"$gte": datetime.fromtimestamp(ten_seconds_ago)}
@@ -101,19 +118,19 @@ def handle_detection():
                     "description": f"Monitoramento IA detectou baixa conformidade para {employee_name}",
                     "createdAt": datetime.utcnow()
                 }
-                res = db.Alert.insert_one(new_alert)
+                res = db["Alert"].insert_one(new_alert)
                 alert_id = str(res.inserted_id)
                 print(f"🚨 Alerta criado no DB: {alert_id}")
 
         # 2. Update Employee and add Activity
         if employee_name:
             clean_name = employee_name.strip()
-            employee = db.Employee.find_one({"name": {"$regex": f"^{clean_name}$", "$options": "i"}})
+            employee = db["Employee"].find_one({"name": {"$regex": f"^{clean_name}$", "$options": "i"}})
 
             if employee:
                 emp_id = employee["_id"]
                 if status == 'offline':
-                    db.Employee.update_one(
+                    db["Employee"].update_one(
                         {"_id": emp_id},
                         {"$set": {"status": 'offline', "location": "Pendente", "lastCheck": "Pendente"}}
                     )
@@ -124,7 +141,7 @@ def handle_detection():
                 rounded_compliance = round(compliance) if compliance is not None else employee.get("compliance", 100)
 
                 # Update Employee
-                db.Employee.update_one(
+                db["Employee"].update_one(
                     {"_id": emp_id},
                     {"$set": {
                         "status": 'alert' if status == 'danger' else 'ok',
@@ -147,7 +164,7 @@ def handle_detection():
                     "employeeId": emp_id,
                     "createdAt": datetime.utcnow()
                 }
-                db.Activity.insert_one(new_activity)
+                db["Activity"].insert_one(new_activity)
                 print(f"👤 {employee_name} atualizado. Status: {status}. Compliance: {rounded_compliance}%")
 
         return jsonify({"success": True, "alertId": alert_id})

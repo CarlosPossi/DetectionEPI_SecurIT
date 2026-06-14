@@ -391,7 +391,10 @@ function Index() {
             {step === "login" && <FacialLogin onSuccess={handleLoginSuccess} />}
 
             {step === "employee-select" && (
-              <EmployeeSelection onSelect={handleEmployeeSelect} />
+              <EmployeeSelection 
+                onSelect={handleEmployeeSelect} 
+                unregisteredOnly={true}
+              />
             )}
 
             {step === "face-registration" && (
