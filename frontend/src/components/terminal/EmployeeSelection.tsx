@@ -22,7 +22,8 @@ export function EmployeeSelection({ onSelect }: EmployeeSelectionProps) {
   useEffect(() => {
     async function loadEmployees() {
       try {
-        const res = await fetch("http://localhost:3000/api/employees");
+        const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:5001";
+        const res = await fetch(`${SPI_API_URL}/api/employees`);
         const data = await res.json();
         setEmployees(data);
       } catch (e) {

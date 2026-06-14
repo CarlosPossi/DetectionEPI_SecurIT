@@ -1,12 +1,17 @@
-from flask import Flask
+from flask import Flask, request, jsonify
 from flask_socketio import SocketIO
 from ultralytics import YOLO
 import cv2
 import numpy as np
 import os
+import base64
+import json
+from datetime import datetime
+from pymongo import MongoClient
+from bson import ObjectId
+from dotenv import load_dotenv
 
-
-import requests
+load_dotenv()
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -17,36 +22,139 @@ model = YOLO(model_path)
 print(f"YOLO Model loaded with labels: {model.names}")
 
 from deepface import DeepFace
-import json
 
-SPI_API_URL = "http://localhost:3000/api/employees"
+# Database connection
+MONGO_URL = os.getenv("DATABASE_URL")
+client = MongoClient(MONGO_URL)
+db = client.get_database() # Gets database from URI (securit_db)
+
+def serialize_doc(doc):
+    if not doc: return None
+    doc["id"] = str(doc.pop("_id"))
+    return doc
 
 def cosine_distance(a, b):
     return 1 - (np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 def get_employees():
     try:
-        response = requests.get(SPI_API_URL)
-        if response.status_code == 200:
-            return response.json()
+        employees = list(db.Employee.find({}))
+        return [serialize_doc(e) for e in employees]
     except Exception as e:
-        print(f"Error fetching employees: {e}")
+        print(f"Error fetching employees from DB: {e}")
     return []
 
 def update_employee_face(employee_id, encoding):
     try:
-        url = f"{SPI_API_URL}/{employee_id}"
-        response = requests.patch(url, json={"faceEncoding": json.dumps(encoding)})
-        return response.status_code == 200
+        result = db.Employee.update_one(
+            {"_id": ObjectId(employee_id)},
+            {"$set": {"faceEncoding": json.dumps(encoding)}}
+        )
+        return result.modified_count > 0
     except Exception as e:
-        print(f"Error updating employee: {e}")
+        print(f"Error updating employee in DB: {e}")
     return False
 
 @app.route("/")
 def index():
-    return "Backend is running!"
+    return "Backend is running with direct DB access!"
 
-import base64
+@app.route("/api/employees", methods=["GET"])
+def api_get_employees():
+    return jsonify(get_employees())
+
+@app.route("/api/detection", methods=["POST"])
+def handle_detection():
+    data = request.json
+    print("📥 Recebendo dados do Terminal...")
+    try:
+        employee_name = data.get("employeeName")
+        location = data.get("location")
+        status = data.get("status")
+        compliance = data.get("compliance")
+        check_in = data.get("checkIn")
+        epis_ok = data.get("episOk", [])
+        epis_missing = data.get("episMissing", [])
+        alerts = data.get("alerts", [])
+        images = data.get("images", [])
+
+        # 1. Create Alert in DB if dangerous
+        alert_id = None
+        if status == 'danger':
+            alert_title = ", ".join(alerts) if alerts else "Violação detectada"
+            
+            # Deduplicação (10 segundos)
+            ten_seconds_ago = datetime.utcnow().timestamp() - 10
+            existing_alert = db.Alert.find_one({
+                "title": alert_title,
+                "location": location or "Terminal",
+                "createdAt": {"$gte": datetime.fromtimestamp(ten_seconds_ago)}
+            })
+
+            if not existing_alert:
+                new_alert = {
+                    "type": 'critical',
+                    "title": alert_title,
+                    "location": location or "Terminal",
+                    "time": datetime.now().strftime("%H:%M"),
+                    "images": images,
+                    "description": f"Monitoramento IA detectou baixa conformidade para {employee_name}",
+                    "createdAt": datetime.utcnow()
+                }
+                res = db.Alert.insert_one(new_alert)
+                alert_id = str(res.inserted_id)
+                print(f"🚨 Alerta criado no DB: {alert_id}")
+
+        # 2. Update Employee and add Activity
+        if employee_name:
+            clean_name = employee_name.strip()
+            employee = db.Employee.find_one({"name": {"$regex": f"^{clean_name}$", "$options": "i"}})
+
+            if employee:
+                emp_id = employee["_id"]
+                if status == 'offline':
+                    db.Employee.update_one(
+                        {"_id": emp_id},
+                        {"$set": {"status": 'offline', "location": "Pendente", "lastCheck": "Pendente"}}
+                    )
+                    print(f"🔌 Sessão encerrada para: {employee_name}")
+                    return jsonify({"success": True})
+
+                check_time = check_in or (employee.get("lastCheck") if employee.get("lastCheck") != 'Pendente' else datetime.now().strftime("%H:%M"))
+                rounded_compliance = round(compliance) if compliance is not None else employee.get("compliance", 100)
+
+                # Update Employee
+                db.Employee.update_one(
+                    {"_id": emp_id},
+                    {"$set": {
+                        "status": 'alert' if status == 'danger' else 'ok',
+                        "compliance": rounded_compliance,
+                        "location": location or employee.get("location"),
+                        "lastCheck": check_time
+                    }}
+                )
+
+                # Create Activity
+                new_activity = {
+                    "type": 'alert' if status == 'danger' else 'check',
+                    "title": f"Violação: {', '.join(alerts)}" if status == 'danger' else ("EPI Verificado (Check-in)" if check_in else "EPI Verificado"),
+                    "time": datetime.now().strftime("%H:%M"),
+                    "location": location or employee.get("location"),
+                    "status": 'alert' if status == 'danger' else 'ok',
+                    "compliance": rounded_compliance,
+                    "episOk": epis_ok,
+                    "episMissing": epis_missing,
+                    "employeeId": emp_id,
+                    "createdAt": datetime.utcnow()
+                }
+                db.Activity.insert_one(new_activity)
+                print(f"👤 {employee_name} atualizado. Status: {status}. Compliance: {rounded_compliance}%")
+
+        return jsonify({"success": True, "alertId": alert_id})
+    except Exception as e:
+        print(f"❌ Erro na API de Detecção: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 import io
 from PIL import Image as PILImage
 

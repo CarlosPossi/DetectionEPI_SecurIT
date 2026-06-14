@@ -53,11 +53,13 @@ function Index() {
   const [history, setHistory] = useState<Record<string, boolean>[]>([]);
   const [totalSeconds, setTotalSeconds] = useState(0);
 
+  const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:5001";
+
   const restart = async () => {
     // 🔥 Se houver um usuário logado, envia o logout automático antes de reiniciar
     if (userData.name) {
       try {
-        await fetch("http://localhost:3000/api/detection", {
+        await fetch(`${SPI_API_URL}/api/detection`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -132,7 +134,7 @@ function Index() {
     episMissing.forEach(epi => alerts.push(`Uso insuficiente de ${epi}`));
 
     try {
-      await fetch('http://localhost:3000/api/detection', {
+      await fetch(`${SPI_API_URL}/api/detection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -159,7 +161,7 @@ function Index() {
     setMonitoringProgress(0);
     setHistory([]);
     violationSnapshotRef.current = null;
-  }, [history, userData.name, location, selectedEpis]);
+  }, [history, userData.name, location, selectedEpis, SPI_API_URL]);
 
   useEffect(() => {
     if (step === "monitoring") {
@@ -281,7 +283,7 @@ function Index() {
     // 🔥 Envio imediato do Check-in para o Dashboard
     console.log("📤 Enviando Check-in:", { employeeName: userData.name, location: loc, checkIn: now });
     try {
-      await fetch('http://localhost:3000/api/detection', {
+      await fetch(`${SPI_API_URL}/api/detection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -302,7 +304,7 @@ function Index() {
 
   const handleEndSession = async () => {
     try {
-      await fetch('http://localhost:3000/api/detection', {
+      await fetch(`${SPI_API_URL}/api/detection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

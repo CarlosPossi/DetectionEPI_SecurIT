@@ -43,4 +43,4 @@ npm run dev
 *O terminal rodará em `http://localhost:5173`.*
 
 ## 🔌 Requisito de Integração
-Para que o sistema de seleção de funcionários e o envio de alertas funcionem, o projeto **SPI_Challenge** (Dashboard) deve estar rodando simultaneamente na porta `3000` (URL configurada para os POST requests).
+O projeto agora é independente do servidor **SPI_Challenge**, conectando-se diretamente ao banco de dados MongoDB para buscar funcionários e salvar alertas/atividades.

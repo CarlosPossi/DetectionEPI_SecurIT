@@ -14,7 +14,8 @@ type DetectionResponse = {
   height: number;
 };
 
-export const socket = io("http://127.0.0.1:5001");
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:5001";
+export const socket = io(BACKEND_URL);
 
 type Props = {
   onDetections?: (detections: Detection[]) => void;
