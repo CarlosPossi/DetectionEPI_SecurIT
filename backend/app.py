@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 from flask_socketio import SocketIO
 from ultralytics import YOLO
@@ -15,8 +15,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'securit-secret-key'
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Dicionário para rastrear sessões ativas (socket_id -> employee_id)
+active_sessions = {}
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(BASE_DIR, "deteccaoepi.pt")
 
@@ -60,6 +65,23 @@ def update_employee_face(employee_id, encoding):
 @app.route("/")
 def index():
     return "Backend is running with direct DB access!"
+
+@app.route("/api/health")
+def health_check():
+    try:
+        # Tenta realizar um comando simples no banco de dados
+        client.admin.command('ping')
+        return jsonify({
+            "status": "online",
+            "database": "connected",
+            "timestamp": datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "database": "disconnected",
+            "message": str(e)
+        }), 500
 
 @app.route("/api/employees", methods=["GET"])
 def api_get_employees():
@@ -262,6 +284,10 @@ def handle_identify_face(data):
 
         if best_match:
             print(f"SUCCESS: Match found! {best_match['name']} (dist: {min_dist:.4f} < {threshold})")
+            
+            # Registrar sessão ativa para logout automático no disconnect
+            active_sessions[request.sid] = best_match["id"]
+            
             socketio.emit("identification_result", {
                 "status": "success",
                 "user": {
@@ -384,6 +410,24 @@ def handle_frame(data):
         })
     except Exception as e:
         print(f"Error processing frame: {e}")
+
+@socketio.on("disconnect")
+def handle_disconnect():
+    sid = request.sid
+    if sid in active_sessions:
+        employee_id = active_sessions.pop(sid)
+        try:
+            db["Employee"].update_one(
+                {"_id": ObjectId(employee_id)},
+                {"$set": {
+                    "status": 'offline',
+                    "location": "Pendente",
+                    "lastCheck": "Pendente",
+                }}
+            )
+            print(f"🔌 Logout automático (Browser Fechado) para o funcionário ID: {employee_id}")
+        except Exception as e:
+            print(f"❌ Erro ao realizar logout automático no disconnect: {e}")
 
 if __name__ == "__main__":
     socketio.run(

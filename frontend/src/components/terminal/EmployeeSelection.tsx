@@ -23,8 +23,8 @@ export function EmployeeSelection({ onSelect, unregisteredOnly = false }: Employ
   useEffect(() => {
     async function loadEmployees() {
       try {
-        const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:5001";
-        const url = `${SPI_API_URL}/api/employees${unregisteredOnly ? "?unregistered=true" : ""}`;
+        const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5001";
+        const url = `${BACKEND_URL}/api/employees${unregisteredOnly ? "?unregistered=true" : ""}`;
         const res = await fetch(url);
         const data = await res.json();
         setEmployees(data);

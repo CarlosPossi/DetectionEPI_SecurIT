@@ -1,53 +1,89 @@
-import { useState } from "react";
-import { MapPin, Navigation } from "lucide-react";
+import { useState, useEffect } from "react";
+import { MapPin, Navigation, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-interface LocationRegistrationProps {
-  onConfirm: (location: string) => void;
+interface Sector {
+  id: string;
+  name: string;
+  description?: string;
+  requiredEPIs: string[];
 }
 
-const LOCATIONS = [
-  { id: "setor-a", name: "Setor A - Produção", description: "Área de máquinas pesadas" },
-  { id: "setor-b", name: "Setor B - Logística", description: "Docas e armazenamento" },
-  { id: "setor-c", name: "Setor C - Almoxarifado", description: "Estoque de materiais" },
-  { id: "externo", name: "Área Externa", description: "Pátio e carregamento" },
-  { id: "manutencao", name: "Oficina de Manutenção", description: "Reparos e ferramentas" },
-];
+interface LocationRegistrationProps {
+  onConfirm: (sector: Sector) => void;
+}
 
 export function LocationRegistration({ onConfirm }: LocationRegistrationProps) {
-  const [selected, setSelected] = useState<string | null>(null);
+  const [sectors, setSectors] = useState<Sector[]>([]);
+  const [selected, setSelected] = useState<Sector | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:3000";
+
+  useEffect(() => {
+    fetch(`${SPI_API_URL}/api/sectors`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setSectors(data);
+        }
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error("Erro ao carregar setores:", err);
+        setLoading(false);
+      });
+  }, [SPI_API_URL]);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 gap-4">
+        <RefreshCw className="h-8 w-8 animate-spin text-primary" />
+        <p>Carregando setores disponíveis...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 py-4">
       <div className="text-center">
         <h2 className="text-2xl font-bold">Onde você vai trabalhar?</h2>
         <p className="text-muted-foreground">
-          Registre sua localização para monitoramento em tempo real.
+          Selecione o setor para configurar os EPIs automaticamente.
         </p>
       </div>
 
-      <div className="grid gap-3">
-        {LOCATIONS.map((loc) => (
-          <button
-            key={loc.id}
-            onClick={() => setSelected(loc.name)}
-            className={`flex items-center gap-4 p-5 rounded-xl border-2 text-left transition-all ${
-              selected === loc.name
-                ? "border-primary bg-primary/10 shadow-md"
-                : "border-border bg-card hover:border-primary/30"
-            }`}
-          >
-            <div
-              className={`p-3 rounded-lg ${selected === loc.name ? "bg-primary text-white" : "bg-muted text-muted-foreground"}`}
+      <div className="grid gap-3 max-h-[400px] overflow-y-auto pr-2">
+        {sectors.length > 0 ? (
+          sectors.map((loc) => (
+            <button
+              key={loc.id}
+              onClick={() => setSelected(loc)}
+              className={`flex items-center gap-4 p-5 rounded-xl border-2 text-left transition-all ${
+                selected?.id === loc.id
+                  ? "border-primary bg-primary/10 shadow-md"
+                  : "border-border bg-card hover:border-primary/30"
+              }`}
             >
-              <MapPin className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="font-bold text-lg">{loc.name}</p>
-              <p className="text-sm text-muted-foreground">{loc.description}</p>
-            </div>
-          </button>
-        ))}
+              <div
+                className={`p-3 rounded-lg ${selected?.id === loc.id ? "bg-primary text-white" : "bg-muted text-muted-foreground"}`}
+              >
+                <MapPin className="h-6 w-6" />
+              </div>
+              <div className="flex-1">
+                <p className="font-bold text-lg">{loc.name}</p>
+                <p className="text-sm text-muted-foreground">{loc.description}</p>
+              </div>
+              <div className="text-xs font-medium bg-muted px-2 py-1 rounded">
+                {loc.requiredEPIs.length} EPIs
+              </div>
+            </button>
+          ))
+        ) : (
+          <div className="text-center py-8 border-2 border-dashed rounded-xl">
+            <p className="text-muted-foreground">Nenhum setor encontrado.</p>
+          </div>
+        )}
       </div>
 
       <div className="flex justify-center pt-6">

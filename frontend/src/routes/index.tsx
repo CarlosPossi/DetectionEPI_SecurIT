@@ -30,6 +30,13 @@ type Detection = {
   conf: number;
 };
 
+interface Sector {
+  id: string;
+  name: string;
+  description?: string;
+  requiredEPIs: string[];
+}
+
 type TerminalStep = "entry" | "login" | "employee-select" | "face-registration" | "epi-setup" | "location" | "monitoring";
 
 export const Route = createFileRoute("/")({
@@ -45,6 +52,14 @@ function Index() {
   const [location, setLocation] = useState("");
   const [checkInTime, setCheckInTime] = useState("");
 
+  const [systemStatus, setSystemStatus] = useState({
+    internet: true,
+    backend: true,
+    database: true,
+    label: "Conectando...",
+    color: "bg-amber-500"
+  });
+
   const webcamHandleRef = useRef<WebcamDetectionHandle>(null);
   const violationSnapshotRef = useRef<string | null>(null);
 
@@ -53,7 +68,53 @@ function Index() {
   const [history, setHistory] = useState<Record<string, boolean>[]>([]);
   const [totalSeconds, setTotalSeconds] = useState(0);
 
-  const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:5001";
+  const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:3000";
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5001";
+
+  // Monitoramento de Conectividade
+  useEffect(() => {
+    const checkConnectivity = async () => {
+      const isOnline = navigator.onLine;
+      let isBackendUp = false;
+      let isDbUp = false;
+
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/health`, { signal: AbortSignal.timeout(3000) });
+        const data = await res.json();
+        isBackendUp = res.ok;
+        isDbUp = data.database === "connected";
+      } catch (e) {
+        isBackendUp = false;
+        isDbUp = false;
+      }
+
+      let label = "Sistema Online";
+      let color = "bg-success";
+
+      if (!isOnline) {
+        label = "Sem Internet";
+        color = "bg-danger";
+      } else if (!isBackendUp) {
+        label = "Erro de Servidor";
+        color = "bg-danger";
+      } else if (!isDbUp) {
+        label = "Erro de Banco";
+        color = "bg-amber-500";
+      }
+
+      setSystemStatus({
+        internet: isOnline,
+        backend: isBackendUp,
+        database: isDbUp,
+        label,
+        color
+      });
+    };
+
+    checkConnectivity();
+    const interval = setInterval(checkConnectivity, 10000); // Checa a cada 10s
+    return () => clearInterval(interval);
+  }, [BACKEND_URL]);
 
   const restart = async () => {
     // 🔥 Se houver um usuário logado, envia o logout automático antes de reiniciar
@@ -270,8 +331,16 @@ function Index() {
     setStep("location");
   };
 
-  const handleLocationConfirm = async (loc: string) => {
+  const handleLocationConfirm = async (sector: Sector) => {
+    const loc = sector.name;
     setLocation(loc);
+    
+    // 🔥 Configura os EPIs automaticamente com base no setor
+    if (sector.requiredEPIs && sector.requiredEPIs.length > 0) {
+      setSelectedEpis(sector.requiredEPIs);
+      toast.info(`EPIs de ${sector.name} configurados.`);
+    }
+
     const now = new Date().toLocaleTimeString("pt-BR", {
       hour: "2-digit",
       minute: "2-digit",
@@ -375,9 +444,13 @@ function Index() {
             </div>
 
             <div className="flex items-center gap-2 text-xs">
-              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-success/15 border border-success/30 text-success uppercase font-bold">
-                <CircleDot className="h-3.5 w-3.5 animate-pulse" />
-                Sistema Online
+              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border ${
+                systemStatus.color === 'bg-success' ? 'bg-success/15 border-success/30 text-success' : 
+                systemStatus.color === 'bg-danger' ? 'bg-destructive/15 border-destructive/30 text-destructive' :
+                'bg-amber-500/15 border-amber-500/30 text-amber-500'
+              } uppercase font-bold`}>
+                <CircleDot className={`h-3.5 w-3.5 ${systemStatus.internet && systemStatus.backend && systemStatus.database ? 'animate-pulse' : ''}`} />
+                {systemStatus.label}
               </span>
             </div>
           </header>

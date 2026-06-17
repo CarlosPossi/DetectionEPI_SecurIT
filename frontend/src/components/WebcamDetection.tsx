@@ -89,6 +89,11 @@ const WebcamDetection = forwardRef<WebcamDetectionHandle, Props>(({ onDetections
 
           ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+          // Prepare to draw mirrored boxes
+          ctx.save();
+          ctx.translate(canvas.width, 0);
+          ctx.scale(-1, 1);
+
           if (frameSize.width > 1 && frameSize.height > 1) {
             const scaleX = canvas.width / frameSize.width;
             const scaleY = canvas.height / frameSize.height;
@@ -108,11 +113,19 @@ const WebcamDetection = forwardRef<WebcamDetectionHandle, Props>(({ onDetections
 
               ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
+              // To keep text readable (not mirrored), we'd need more complex logic, 
+              // but flipping the whole context is the cleanest way to sync boxes.
+              // Let's un-mirror just for text.
+              ctx.save();
+              ctx.translate(x1, y1);
+              ctx.scale(-1, 1);
               ctx.fillStyle = ctx.strokeStyle;
               ctx.font = "16px Arial";
-              ctx.fillText(d.label, x1, y1 - 5);
+              ctx.fillText(d.label, - (ctx.measureText(d.label).width), -5);
+              ctx.restore();
             });
           }
+          ctx.restore();
         }
       }
 
@@ -131,6 +144,7 @@ const WebcamDetection = forwardRef<WebcamDetectionHandle, Props>(({ onDetections
       <Webcam
         ref={webcamRef}
         audio={false}
+        mirrored={true}
         screenshotFormat="image/jpeg"
         videoConstraints={{
           width: 640,
@@ -140,7 +154,7 @@ const WebcamDetection = forwardRef<WebcamDetectionHandle, Props>(({ onDetections
         className="absolute w-full h-full object-cover"
       />
 
-      <canvas ref={canvasRef} className="absolute w-full h-full" />
+      <canvas ref={canvasRef} className="absolute w-full h-full scale-x-[-1]" />
     </div>
   );
 });
