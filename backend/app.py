@@ -11,6 +11,11 @@ from datetime import datetime
 from pymongo import MongoClient
 from bson import ObjectId
 from dotenv import load_dotenv
+import time
+import requests
+
+ESP32_ALERT_URL = "http://192.168.0.23/alert"
+ESP32_STOP_URL = "http://192.168.0.23/stop"
 
 load_dotenv()
 
@@ -28,12 +33,30 @@ model_path = os.path.join(BASE_DIR, "deteccaoepi.pt")
 model = YOLO(model_path)
 print(f"YOLO Model loaded with labels: {model.names}")
 
+last_state = "OK"
+last_change_time = 0
+DEBOUNCE_SECONDS = 1.0
+
 from deepface import DeepFace
 
 # Database connection
 MONGO_URL = os.getenv("DATABASE_URL")
 client = MongoClient(MONGO_URL)
 db = client.get_database() # Gets database from URI (securit_db)
+
+def trigger_alert():
+    try:
+        r = requests.post(ESP32_ALERT_URL, timeout=2)
+        print("🚨 ALERT SENT:", r.status_code, r.text)
+    except Exception as e:
+        print("ERRO ALERT:", e)
+
+def stop_alert():
+    try:
+        r = requests.post(ESP32_STOP_URL, timeout=2)
+        print("🔕 STOP SENT:", r.status_code, r.text)
+    except Exception as e:
+        print("ERRO STOP:", e)
 
 def serialize_doc(doc):
     if not doc: return None
@@ -368,6 +391,7 @@ def handle_register_face(data):
 
 @socketio.on("frame")
 def handle_frame(data):
+    global last_state, last_change_time
     try:
         print("--- FRAME RECEIVED ---")
         # Check if data is bytes (blob) or string (base64)
@@ -389,19 +413,50 @@ def handle_frame(data):
         # YOLO Inference
         results = model.predict(frame, conf=0.25, verbose=False)
         detections = []
+        detected = set()
+
         for box in results[0].boxes:
             cls = int(box.cls[0])
             conf = float(box.conf[0])
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             label = model.names[cls]
+
             detections.append({
                 "label": label,
                 "box": [x1, y1, x2, y2],
                 "conf": conf
             })
+
+            detected.add(label)
         
-        if detections:
-            print(f"DEBUG: Detections found: {[d['label'] for d in detections]}")
+        print("DET;", detected)
+
+        EPIS = {"luva"}
+
+        faltando = EPIS - detected
+
+        current_state = "ALERTA" if len(faltando) > 0 else "OK"
+
+        now = time.time()
+
+        if current_state != last_state and (now - last_change_time) > DEBOUNCE_SECONDS:
+            print(f"STATE: {last_state} -> {current_state}")
+
+            if current_state == "ALERTA":
+                trigger_alert()
+
+            else:
+                stop_alert()
+            
+            last_state = current_state
+            last_change_time = now
+        
+
+        socketio.emit("debug", {
+            "detected": list(detected),
+            "faltando": list(faltando),
+            "state": current_state
+        })
         
         socketio.emit("detections", {
             "detections": detections,
@@ -409,7 +464,7 @@ def handle_frame(data):
             "height": h
         })
     except Exception as e:
-        print(f"Error processing frame: {e}")
+        print(f"Error processing frame:", e)
 
 @socketio.on("disconnect")
 def handle_disconnect():
