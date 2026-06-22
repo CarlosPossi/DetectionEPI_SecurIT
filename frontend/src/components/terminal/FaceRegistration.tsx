@@ -22,8 +22,13 @@ export function FaceRegistration({ employeeId, employeeName, onComplete }: FaceR
     const img = webcamRef.current?.getScreenshot();
     if (img) {
       const blob = await fetch(img).then(r => r.blob());
-      setStatus("Face capturada com sucesso!");
-      setTimeout(() => onComplete(blob), 1000);
+      try {
+        await Promise.resolve(onComplete(blob));
+        setStatus("Face capturada com sucesso!");
+      } catch (err) {
+        setStatus("Erro no processamento. Tente novamente.");
+        setIsRegistering(false);
+      }
     } else {
       toast.error("Erro ao capturar imagem da câmera.");
       setIsRegistering(false);
@@ -34,7 +39,9 @@ export function FaceRegistration({ employeeId, employeeName, onComplete }: FaceR
     <div className="flex flex-col items-center justify-center space-y-6 py-6">
       <div className="text-center space-y-2">
         <h2 className="text-3xl font-black uppercase tracking-tighter">Cadastro Facial</h2>
-        <p className="text-muted-foreground">Posicione seu rosto para iniciarmos o processo de biometria.</p>
+        <p className="text-muted-foreground">
+          {employeeName ? `Posicione o rosto de ${employeeName} para iniciar a biometria.` : "Posicione seu rosto para iniciarmos o processo de biometria."}
+        </p>
       </div>
 
       <div className="relative h-72 w-72 overflow-hidden rounded-full border-4 border-primary/30 bg-black shadow-2xl">

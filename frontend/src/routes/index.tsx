@@ -238,11 +238,8 @@ function Index() {
         })
       });
 
-      if (isCompliant) {
-        toast.success("Monitoramento concluído: Seguro!", { description: "Dados detalhados enviados." });
-      } else {
-        toast.error("Alerta Crítico Enviado!", { description: "Violação de segurança detectada." });
-      }
+      // Sem toasts de monitoramento conforme solicitação
+
     } catch (error) {
       console.error("Erro ao enviar:", error);
     }
@@ -285,7 +282,7 @@ function Index() {
   };
 
   const handleRegisterStart = () => {
-    setStep("face-registration");
+    setStep("employee-select");
   };
 
   const handleLoginSuccess = (user?: { id: string, name: string, requiredEPIs?: string[] }) => {
@@ -294,64 +291,57 @@ function Index() {
       
       if (user.requiredEPIs && user.requiredEPIs.length > 0) {
         setSelectedEpis(user.requiredEPIs);
-        setStep("location");
-        toast.success(`Acesso identificado: ${user.name}`);
-        toast.info(`EPIs configurados automaticamente.`);
-      } else {
-        setStep("epi-setup");
-        toast.success(`Acesso identificado: ${user.name}`);
       }
+      setStep("location");
+      toast.success(`Acesso identificado: ${user.name}`);
     } else {
       toast.error("Rosto não reconhecido. Por favor, realize o cadastro.");
       setStep("entry");
     }
   };
 
-  const handleRegistrationFaceCaptured = (imageBlob: Blob) => {
-    // We store the captured face blob temporarily and move to employee selection
-    (window as any).tempFaceBlob = imageBlob;
-    setStep("employee-select");
-    toast.info("Agora selecione seu perfil para vincular o cadastro.");
+  const handleRegistrationFaceCaptured = async (imageBlob: Blob) => {
+    toast.loading("Vinculando biometria ao perfil...");
+    try {
+      const { socket } = await import("@/components/WebcamDetection");
+      
+      const registrationPromise = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject("Tempo esgotado"), 10000);
+        socket.once("registration_result", (data: any) => {
+          clearTimeout(timeout);
+          if (data.status === "success") resolve(data);
+          else reject(data.message || "Erro no servidor");
+        });
+      });
+
+      socket.emit("register_face", { image: imageBlob, employeeId: userData.id });
+      await registrationPromise;
+      
+      toast.dismiss();
+      toast.success(`Cadastro facial concluído com sucesso para ${userData.name}!`);
+      
+      // Voltar para a tela inicial para realizar o login
+      setStep("entry");
+      setUserData({ id: "", name: "" });
+      setSelectedEpis([]);
+      setLocation("");
+      setMonitoringProgress(0);
+      setHistory([]);
+      setTotalSeconds(0);
+    } catch (error) {
+      toast.dismiss();
+      toast.error(`Erro ao salvar cadastro: ${error}`);
+      throw error;
+    }
   };
 
   const handleEmployeeSelect = async (emp: { id: string, name: string, requiredEPIs?: string[] }) => {
     setUserData({ id: emp.id, name: emp.name });
     
-    const faceBlob = (window as any).tempFaceBlob;
-    if (faceBlob) {
-      // Perform the actual linking now
-      toast.loading("Vinculando biometria ao perfil...");
-      try {
-        const { socket } = await import("@/components/WebcamDetection");
-        
-        const registrationPromise = new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject("Tempo esgotado"), 10000);
-          socket.once("registration_result", (data: any) => {
-            clearTimeout(timeout);
-            if (data.status === "success") resolve(data);
-            else reject(data.message || "Erro no servidor");
-          });
-        });
-
-        socket.emit("register_face", { image: faceBlob, employeeId: emp.id });
-        await registrationPromise;
-        
-        toast.dismiss();
-        toast.success(`Cadastro facial concluído para ${emp.name}`);
-        delete (window as any).tempFaceBlob;
-      } catch (error) {
-        toast.dismiss();
-        toast.error(`Erro ao salvar cadastro: ${error}`);
-      }
-    }
-
     if (emp.requiredEPIs && emp.requiredEPIs.length > 0) {
         setSelectedEpis(emp.requiredEPIs);
-        setStep("location");
-        toast.info(`EPIs configurados automaticamente.`);
-    } else {
-        setStep("epi-setup");
     }
+    setStep("face-registration");
   };
 
   const handleEpiConfirm = (epis: string[]) => {
@@ -366,7 +356,7 @@ function Index() {
     // 🔥 Configura os EPIs automaticamente com base no setor
     if (sector.requiredEPIs && sector.requiredEPIs.length > 0) {
       setSelectedEpis(sector.requiredEPIs);
-      toast.info(`EPIs de ${sector.name} configurados.`);
+      // Sem toasts de config de EPIs
     }
 
     const now = new Date().toLocaleTimeString("pt-BR", {
@@ -375,7 +365,8 @@ function Index() {
     });
     setCheckInTime(now);
     setStep("monitoring");
-    toast.info("Iniciando monitoramento de 1 minuto...");
+    // Sem toast de início de monitoramento
+
 
     // 🔥 Envio imediato do Check-in para o Dashboard
     console.log("📤 Enviando Check-in:", { employeeName: userData.name, location: loc, checkIn: now });
