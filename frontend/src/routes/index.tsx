@@ -116,6 +116,34 @@ function Index() {
     return () => clearInterval(interval);
   }, [BACKEND_URL]);
 
+  // 🔥 Efeito para encerrar a sessão automaticamente ao fechar a página/aba do navegador ou navegar para longe
+  useEffect(() => {
+    const handleUnload = () => {
+      if (userData.name) {
+        const payload = JSON.stringify({
+          employeeName: userData.name,
+          status: "offline",
+          location: "Pendente",
+          alerts: [],
+          images: [],
+        });
+
+        // O 'keepalive: true' garante que a requisição seja concluída mesmo após o fechamento da página
+        fetch(`${SPI_API_URL}/api/detection`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+          keepalive: true,
+        }).catch((err) => console.error("Erro ao enviar beacon de encerramento:", err));
+      }
+    };
+
+    window.addEventListener("beforeunload", handleUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleUnload);
+    };
+  }, [userData.name, SPI_API_URL]);
+
   const restart = async () => {
     // 🔥 Se houver um usuário logado, envia o logout automático antes de reiniciar
     if (userData.name) {
