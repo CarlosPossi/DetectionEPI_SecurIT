@@ -125,6 +125,29 @@ def api_get_employees():
         print(f"ERROR fetching employees: {e}")
         return jsonify([]), 500
 
+@app.route("/api/sectors", methods=["GET"])
+def api_get_sectors():
+    try:
+        sectors = list(db["Sector"].find({}).sort("name", 1))
+        
+        # Auto-seed if empty to ensure sectors are always available
+        if not sectors:
+            default_sectors = [
+                { "name": "Setor A - Produção", "description": "Área de máquinas pesadas", "requiredEPIs": ["helmet", "vest", "boots"], "createdAt": datetime.utcnow() },
+                { "name": "Setor B - Logística", "description": "Docas e armazenamento", "requiredEPIs": ["vest", "boots", "gloves"], "createdAt": datetime.utcnow() },
+                { "name": "Setor C - Almoxarifado", "description": "Estoque de materiais", "requiredEPIs": ["boots", "glasses"], "createdAt": datetime.utcnow() },
+                { "name": "Área Externa", "description": "Pátio e carregamento", "requiredEPIs": ["helmet", "vest"], "createdAt": datetime.utcnow() },
+                { "name": "Oficina de Manutenção", "description": "Reparos e ferramentas", "requiredEPIs": ["helmet", "gloves", "glasses"], "createdAt": datetime.utcnow() },
+            ]
+            db["Sector"].insert_many(default_sectors)
+            sectors = list(db["Sector"].find({}).sort("name", 1))
+            
+        serialized = [serialize_doc(s) for s in sectors]
+        return jsonify(serialized)
+    except Exception as e:
+        print(f"Error fetching sectors: {e}")
+        return jsonify({"error": "Failed to fetch sectors"}), 500
+
 @app.route("/api/detection", methods=["POST"])
 def handle_detection():
     data = request.json

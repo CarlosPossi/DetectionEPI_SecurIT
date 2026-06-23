@@ -68,7 +68,6 @@ function Index() {
   const [history, setHistory] = useState<Record<string, boolean>[]>([]);
   const [totalSeconds, setTotalSeconds] = useState(0);
 
-  const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:3000";
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5001";
 
   // Monitoramento de Conectividade
@@ -129,7 +128,7 @@ function Index() {
         });
 
         // O 'keepalive: true' garante que a requisição seja concluída mesmo após o fechamento da página
-        fetch(`${SPI_API_URL}/api/detection`, {
+        fetch(`${BACKEND_URL}/api/detection`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: payload,
@@ -142,13 +141,13 @@ function Index() {
     return () => {
       window.removeEventListener("beforeunload", handleUnload);
     };
-  }, [userData.name, SPI_API_URL]);
+  }, [userData.name, BACKEND_URL]);
 
   const restart = async () => {
     // 🔥 Se houver um usuário logado, envia o logout automático antes de reiniciar
     if (userData.name) {
       try {
-        await fetch(`${SPI_API_URL}/api/detection`, {
+        await fetch(`${BACKEND_URL}/api/detection`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -223,7 +222,7 @@ function Index() {
     episMissing.forEach(epi => alerts.push(`Uso insuficiente de ${epi}`));
 
     try {
-      await fetch(`${SPI_API_URL}/api/detection`, {
+      await fetch(`${BACKEND_URL}/api/detection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -247,7 +246,7 @@ function Index() {
     setMonitoringProgress(0);
     setHistory([]);
     violationSnapshotRef.current = null;
-  }, [history, userData.name, location, selectedEpis, SPI_API_URL]);
+  }, [history, userData.name, location, selectedEpis, BACKEND_URL]);
 
   useEffect(() => {
     if (step === "monitoring") {
@@ -371,7 +370,7 @@ function Index() {
     // 🔥 Envio imediato do Check-in para o Dashboard
     console.log("📤 Enviando Check-in:", { employeeName: userData.name, location: loc, checkIn: now });
     try {
-      await fetch(`${SPI_API_URL}/api/detection`, {
+      await fetch(`${BACKEND_URL}/api/detection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -392,7 +391,7 @@ function Index() {
 
   const handleEndSession = async () => {
     try {
-      await fetch(`${SPI_API_URL}/api/detection`, {
+      await fetch(`${BACKEND_URL}/api/detection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

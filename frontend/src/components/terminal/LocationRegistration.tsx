@@ -18,10 +18,10 @@ export function LocationRegistration({ onConfirm }: LocationRegistrationProps) {
   const [selected, setSelected] = useState<Sector | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const SPI_API_URL = import.meta.env.VITE_SPI_API_URL || "http://localhost:3000";
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5001";
 
   useEffect(() => {
-    fetch(`${SPI_API_URL}/api/sectors`)
+    fetch(`${BACKEND_URL}/api/sectors`)
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -33,7 +33,7 @@ export function LocationRegistration({ onConfirm }: LocationRegistrationProps) {
         console.error("Erro ao carregar setores:", err);
         setLoading(false);
       });
-  }, [SPI_API_URL]);
+  }, [BACKEND_URL]);
 
   if (loading) {
     return (
