@@ -191,22 +191,74 @@ def handle_detection():
                 print(f"🚨 Alerta criado no DB: {alert_id}")
 
         # 2. Update Employee and add Activity
-        if employee_name:
-            clean_name = employee_name.strip()
-            employee = db["Employee"].find_one({"name": {"$regex": f"^{clean_name}$", "$options": "i"}})
+        employee_id = data.get("employeeId") or data.get("id")
+        if employee_id or employee_name:
+            employee = None
+            if employee_id:
+                try:
+                    employee = db["Employee"].find_one({"_id": ObjectId(employee_id)})
+                except Exception:
+                    pass
+            if not employee and employee_name:
+                import re
+                clean_name = employee_name.strip()
+                safe_name = re.escape(clean_name)
+                employee = db["Employee"].find_one({"name": {"$regex": f"^{safe_name}$", "$options": "i"}})
 
             if employee:
                 emp_id = employee["_id"]
                 if status == 'offline':
                     db["Employee"].update_one(
                         {"_id": emp_id},
-                        {"$set": {"status": 'offline', "location": "Pendente", "lastCheck": "Pendente"}}
+                        {"$set": {"status": 'offline', "compliance": 0, "location": "Pendente", "lastCheck": "Pendente"}}
                     )
-                    print(f"🔌 Sessão encerrada para: {employee_name}")
+                    print(f"🔌 Sessão encerrada para: {employee_name} (Conformidade setada para 0%)")
                     return jsonify({"success": True})
 
                 check_time = check_in or (employee.get("lastCheck") if employee.get("lastCheck") != 'Pendente' else datetime.now().strftime("%H:%M"))
                 rounded_compliance = round(compliance) if compliance is not None else employee.get("compliance", 100)
+
+                # Deduplicação (10 segundos por funcionário para evitar gravações duplicadas)
+                ten_seconds_ago = datetime.utcnow().timestamp() - 10
+                recent_act = db["Activity"].find_one({
+                    "employeeId": emp_id,
+                    "createdAt": {"$gte": datetime.fromtimestamp(ten_seconds_ago)}
+                })
+                if recent_act:
+                    print(f"⏭️ Evento duplicado ignorado em Python para {employee_name} (Deduplicação de 10s)")
+                    return jsonify({"success": True, "message": "Deduplicated"})
+
+                # Regra de Gamificação
+                is_check_in = bool(check_in or data.get("isCheckIn"))
+                is_compliant = rounded_compliance >= 80
+                
+                curr_xp = employee.get("xp") if employee.get("xp") is not None else 0
+                curr_streak = employee.get("streak") if employee.get("streak") is not None else 0
+                curr_total_checks = employee.get("totalChecks") if employee.get("totalChecks") is not None else 0
+                curr_compliant_checks = employee.get("compliantChecks") if employee.get("compliantChecks") is not None else 0
+
+                if is_check_in:
+                    # Check-in inicial: NÃO soma XP
+                    xp_gained = 0
+                    new_xp = curr_xp
+                    new_streak = curr_streak
+                    new_total_checks = curr_total_checks
+                    new_compliant_checks = curr_compliant_checks
+                else:
+                    # Ciclo de 1 minuto monitorado: Estritamente 10 XP por ciclo de conformidade
+                    new_total_checks = curr_total_checks + 1
+                    if is_compliant:
+                        new_compliant_checks = curr_compliant_checks + 1
+                        new_streak = curr_streak + 1
+                        xp_gained = 10 # Estritamente 10 XP
+                        new_xp = curr_xp + xp_gained
+                    else:
+                        new_compliant_checks = curr_compliant_checks
+                        new_streak = 0
+                        xp_gained = 0
+                        new_xp = curr_xp
+
+                new_level = (new_xp // 100) + 1
 
                 # Update Employee
                 db["Employee"].update_one(
@@ -215,14 +267,19 @@ def handle_detection():
                         "status": 'alert' if status == 'danger' else 'ok',
                         "compliance": rounded_compliance,
                         "location": location or employee.get("location"),
-                        "lastCheck": check_time
+                        "lastCheck": check_time,
+                        "xp": new_xp,
+                        "level": new_level,
+                        "streak": new_streak,
+                        "totalChecks": new_total_checks,
+                        "compliantChecks": new_compliant_checks
                     }}
                 )
 
                 # Create Activity
                 new_activity = {
                     "type": 'alert' if status == 'danger' else 'check',
-                    "title": f"Violação: {', '.join(alerts)}" if status == 'danger' else ("EPI Verificado (Check-in)" if check_in else "EPI Verificado"),
+                    "title": "EPI Verificado (Check-in)" if is_check_in else (f"EPI Verificado (+10 XP)" if is_compliant else (f"Violação: {', '.join(alerts)}" if status == 'danger' else "EPI Verificado (< 80%)")),
                     "time": datetime.now().strftime("%H:%M"),
                     "location": location or employee.get("location"),
                     "status": 'alert' if status == 'danger' else 'ok',
@@ -233,7 +290,14 @@ def handle_detection():
                     "createdAt": datetime.utcnow()
                 }
                 db["Activity"].insert_one(new_activity)
-                print(f"👤 {employee_name} atualizado. Status: {status}. Compliance: {rounded_compliance}%")
+                print(f"👤 {employee_name} atualizado. Compliance: {rounded_compliance}%. Gamificação: +{xp_gained} XP (Total: {new_xp} XP, Nível: {new_level}, Streak: {new_streak})")
+
+                # 📡 Sincronização direta com o Dashboard SPI_Challenge (Next.js no porto 3000)
+                try:
+                    requests.post("http://localhost:3000/api/detection", json=data, timeout=1.0)
+                    print(f"📡 Sincronizado em tempo real com SPI_Challenge Dashboard (Porto 3000)")
+                except Exception as sync_err:
+                    pass
 
         return jsonify({"success": True, "alertId": alert_id})
     except Exception as e:
@@ -499,6 +563,7 @@ def handle_disconnect():
                 {"_id": ObjectId(employee_id)},
                 {"$set": {
                     "status": 'offline',
+                    "compliance": 0,
                     "location": "Pendente",
                     "lastCheck": "Pendente",
                 }}

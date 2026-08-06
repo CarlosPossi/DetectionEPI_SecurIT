@@ -222,23 +222,35 @@ function Index() {
     episMissing.forEach(epi => alerts.push(`Uso insuficiente de ${epi}`));
 
     try {
+      const payload = {
+        employeeName: userData.name,
+        location: location,
+        status: isCompliant ? 'ok' : 'danger',
+        compliance: overallCompliance * 100,
+        episOk,
+        episMissing,
+        alerts: alerts,
+        images: !isCompliant && violationSnapshotRef.current ? [violationSnapshotRef.current] : []
+      };
+
+      // Notifica o backend Flask (porto 5001), que atualizará o banco e sincronizará com o SPI_Challenge
       await fetch(`${BACKEND_URL}/api/detection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employeeName: userData.name,
-          location: location,
-          status: isCompliant ? 'ok' : 'danger',
-          compliance: overallCompliance * 100,
-          episOk,
-          episMissing,
-          alerts: alerts,
-          images: !isCompliant && violationSnapshotRef.current ? [violationSnapshotRef.current] : []
-        })
+        body: JSON.stringify(payload)
       });
 
-      // Sem toasts de monitoramento conforme solicitação
-
+      // Feedback visual de Gamificação no Totem Terminal
+      const roundedPct = Math.round(overallCompliance * 100);
+      if (overallCompliance >= 0.8) {
+        toast.success(`🎉 +10 XP conquistados! Conformidade individual do ciclo: ${roundedPct}% (≥ 80%)`, {
+          duration: 5000,
+        });
+      } else {
+        toast.info(`⚠️ Ciclo encerrado com ${roundedPct}% de conformidade. Mantenha ≥ 80% para ganhar +10 XP!`, {
+          duration: 5000,
+        });
+      }
     } catch (error) {
       console.error("Erro ao enviar:", error);
     }
