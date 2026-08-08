@@ -20,7 +20,7 @@ import { EmployeeSelection } from "@/components/terminal/EmployeeSelection";
 import { FaceRegistration } from "@/components/terminal/FaceRegistration";
 import { EpiSelection } from "@/components/terminal/EpiSelection";
 import { LocationRegistration } from "@/components/terminal/LocationRegistration";
-import WebcamDetection, { WebcamDetectionHandle } from "@/components/WebcamDetection";
+import WebcamDetection, { WebcamDetectionHandle,socket } from "@/components/WebcamDetection";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
@@ -287,6 +287,12 @@ function Index() {
       calculateFinalAverage();
     }
   }, [monitoringProgress, calculateFinalAverage]);
+
+    useEffect(() => {
+    if (step === "monitoring" && selectedEpis.length > 0) {
+      socket.emit("set_required_epis", selectedEpis);
+    }
+  }, [step, selectedEpis]);
 
   const handleLoginStart = () => {
     setStep("login");

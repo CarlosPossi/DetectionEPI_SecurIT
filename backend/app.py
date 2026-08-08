@@ -14,9 +14,6 @@ from dotenv import load_dotenv
 import time
 import requests
 
-ESP32_ALERT_URL = "http://192.168.0.23/alert"
-ESP32_STOP_URL = "http://192.168.0.23/stop"
-
 load_dotenv()
 
 app = Flask(__name__)
@@ -37,6 +34,22 @@ last_state = "OK"
 last_change_time = 0
 DEBOUNCE_SECONDS = 1.0
 
+# Mapeia o id de EPI usado na tela (Sector.requiredEPIs / EpiSelection) para o(s)
+# label(s) reais que o modelo YOLO retorna. Usado pelo alarme físico (ESP32)
+# pra exigir TODOS os EPIs do setor, e não só a luva.
+EPI_LABEL_MAP = {
+    "helmet": {"capacete"},
+    "vest": {"colete", "macacao"},
+    "mask": {"mascara-cirurgica"},
+    "glasses": {"oculos"},
+    "gloves": {"luva"},
+    "boots": {"sapato"},
+}
+
+# sid -> lista de ids de EPI exigidos na sessão atual (vem do frontend via
+# o evento "set_required_epis", emitido quando o setor/local é confirmado).
+required_epis_by_sid = {}
+
 from deepface import DeepFace
 
 # Database connection
@@ -44,19 +57,44 @@ MONGO_URL = os.getenv("DATABASE_URL")
 client = MongoClient(MONGO_URL)
 db = client.get_database() # Gets database from URI (securit_db)
 
-def trigger_alert():
+DEVICE_STATE_ID = "esp32_buzzer"
+
+def set_device_state(state: str):
+    """Grava o estado do alarme (ALERTA/OK) no MongoDB. Fonte da verdade para o ESP32.
+    Chamado só quando o estado MUDA (não a cada frame)."""
     try:
-        r = requests.post(ESP32_ALERT_URL, timeout=2)
-        print("🚨 ALERT SENT:", r.status_code, r.text)
+        db["DeviceState"].update_one(
+            {"_id": DEVICE_STATE_ID},
+            {"$set": {
+                "state": state,
+                "updatedAt": datetime.utcnow(),
+                "lastSeenAt": datetime.utcnow()  # também conta como "sinal de vida"
+            }},
+            upsert=True
+        )
+        print(f"💾 Estado do alarme salvo no MongoDB: {state}")
     except Exception as e:
-        print("ERRO ALERT:", e)
+        print("ERRO ao salvar estado do alarme no DB:", e)
+
+def touch_alive():
+    """Atualiza só o 'sinal de vida' (chamado a cada frame processado, mude o
+    estado ou não). É isso que o endpoint usa pra saber se o monitoramento
+    ainda está realmente ativo, sem depender só da última mudança de estado."""
+    try:
+        db["DeviceState"].update_one(
+            {"_id": DEVICE_STATE_ID},
+            {"$set": {"lastSeenAt": datetime.utcnow()},
+            "$setOnInsert": {"state": "OK", "updatedAt": datetime.utcnow()}},
+            upsert=True
+        )
+    except Exception as e:
+        print("ERRO ao atualizar sinal de vida do alarme:", e)
+
+def trigger_alert():
+    set_device_state("ALERTA")
 
 def stop_alert():
-    try:
-        r = requests.post(ESP32_STOP_URL, timeout=2)
-        print("🔕 STOP SENT:", r.status_code, r.text)
-    except Exception as e:
-        print("ERRO STOP:", e)
+    set_device_state("OK")
 
 def serialize_doc(doc):
     if not doc: return None
@@ -147,6 +185,39 @@ def api_get_sectors():
     except Exception as e:
         print(f"Error fetching sectors: {e}")
         return jsonify({"error": "Failed to fetch sectors"}), 500
+    
+@app.route("/api/alert-status", methods=["GET"])
+def api_alert_status():
+    """
+    Endpoint que o ESP32 consulta via polling (HTTP GET) para saber se deve
+    ligar ou desligar o alarme. O estado vem 100% do MongoDB (coleção
+    DeviceState), nunca de uma chamada direta/local do backend para o ESP32.
+    """
+    # Se não chega nenhum frame (monitoramento parado/sessão caiu) há mais que
+    # isso, consideramos que não há mais risco sendo avaliado -> força "OK".
+    STALE_SECONDS = 8
+
+    try:
+        doc = db["DeviceState"].find_one({"_id": DEVICE_STATE_ID})
+        state = doc["state"] if doc else "OK"
+        updated_at = doc.get("updatedAt") if doc else None
+        last_seen_at = doc.get("lastSeenAt") if doc else None
+
+        is_stale = last_seen_at is not None and (
+            (datetime.utcnow() - last_seen_at).total_seconds() > STALE_SECONDS
+        )
+        if is_stale:
+            state = "OK"
+
+        return jsonify({
+            "state": state,          # "ALERTA" ou "OK"
+            "alert": state == "ALERTA",
+            "updatedAt": updated_at.isoformat() if updated_at else None,
+            "stale": is_stale
+        }), 200
+    except Exception as e:
+        print(f"Error fetching device state: {e}")
+        return jsonify({"state": "OK", "alert": False, "error": str(e)}), 500
 
 @app.route("/api/detection", methods=["POST"])
 def handle_detection():
@@ -475,6 +546,21 @@ def handle_register_face(data):
     except Exception as e:
         print(f"CRITICAL ERROR in registration: {e}")
         socketio.emit("registration_result", {"status": "error", "message": str(e)})
+        
+@socketio.on("set_required_epis")
+def handle_set_required_epis(data):
+    """
+    Recebido do frontend quando o setor/local é confirmado (ou os EPIs mudam).
+    'data' deve ser uma lista de ids, ex: ["helmet", "vest", "gloves"].
+    Isso é o que o alarme físico (ESP32) usa pra saber TODOS os EPIs exigidos,
+    em vez de checar só a luva.
+    """
+    try:
+        epis = data if isinstance(data, list) else []
+        required_epis_by_sid[request.sid] = epis
+        print(f"🦺 EPIs exigidos definidos para sessão {request.sid}: {epis}")
+    except Exception as e:
+        print(f"ERRO ao definir EPIs exigidos: {e}")
 
 @socketio.on("frame")
 def handle_frame(data):
@@ -518,11 +604,19 @@ def handle_frame(data):
         
         print("DET;", detected)
 
-        EPIS = {"luva"}
+        EPIS = required_epis_by_sid.get(request.sid, [])
 
-        faltando = EPIS - detected
+        faltando = []
+        for epi_id in EPIS:
+            labels_do_epi = EPI_LABEL_MAP.get(epi_id, set())
+            if not (labels_do_epi & detected):  # nenhum label desse EPI foi detectado
+                faltando.append(epi_id)
 
         current_state = "ALERTA" if len(faltando) > 0 else "OK"
+
+        current_state = "ALERTA" if len(faltando) > 0 else "OK"
+        
+        touch_alive()
 
         now = time.time()
 
@@ -555,7 +649,19 @@ def handle_frame(data):
 
 @socketio.on("disconnect")
 def handle_disconnect():
+    global last_state, last_change_time
     sid = request.sid
+
+    required_epis_by_sid.pop(sid, None)
+
+    # 🔕 Failsafe: se a sessão de monitoramento cair (aba fechada, wifi caiu,
+    # usuário saiu da tela), ninguém mais vai chamar stop_alert() via handle_frame.
+    # Sem isso, o alarme fica preso em "ALERTA" para sempre no banco.
+    if last_state == "ALERTA":
+        stop_alert()
+        last_state = "OK"
+        last_change_time = time.time()
+
     if sid in active_sessions:
         employee_id = active_sessions.pop(sid)
         try:
