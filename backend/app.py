@@ -13,6 +13,9 @@ from bson import ObjectId
 from dotenv import load_dotenv
 import time
 import requests
+import atexit
+import signal
+import sys
 
 load_dotenv()
 
@@ -95,6 +98,36 @@ def trigger_alert():
 
 def stop_alert():
     set_device_state("OK")
+
+def cleanup_active_sessions():
+    """Garante que quando o backend/terminal do detectionEPI for encerrado, todas as sessões ativas fiquem offline."""
+    try:
+        print("🛑 Encerrando sessões ativas do terminal...")
+        db["Employee"].update_many(
+            {"status": {"$ne": "offline"}},
+            {"$set": {
+                "status": "offline",
+                "compliance": 0,
+                "location": "Pendente",
+                "lastCheck": "Pendente",
+                "lastHeartbeat": None
+            }}
+        )
+        stop_alert()
+        print("✅ Sessões ativas encerradas com sucesso.")
+    except Exception as e:
+        print(f"Erro ao limpar sessões: {e}")
+
+atexit.register(cleanup_active_sessions)
+
+def signal_handler(sig, frame):
+    cleanup_active_sessions()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+if hasattr(signal, "SIGHUP"):
+    signal.signal(signal.SIGHUP, signal_handler)
 
 def serialize_doc(doc):
     if not doc: return None
@@ -219,6 +252,34 @@ def api_alert_status():
         print(f"Error fetching device state: {e}")
         return jsonify({"state": "OK", "alert": False, "error": str(e)}), 500
 
+@app.route("/api/heartbeat", methods=["POST"])
+def api_heartbeat():
+    data = request.json or {}
+    employee_id = data.get("employeeId") or data.get("id")
+    employee_name = data.get("employeeName")
+    try:
+        query = {}
+        if employee_id:
+            try:
+                query = {"_id": ObjectId(employee_id)}
+            except Exception:
+                pass
+        if not query and employee_name:
+            import re
+            clean_name = employee_name.strip()
+            safe_name = re.escape(clean_name)
+            query = {"name": {"$regex": f"^{safe_name}$", "$options": "i"}}
+        
+        if query:
+            db["Employee"].update_one(
+                query,
+                {"$set": {"lastHeartbeat": datetime.utcnow()}}
+            )
+            return jsonify({"success": True}), 200
+    except Exception as e:
+        print(f"Erro no heartbeat: {e}")
+    return jsonify({"success": False}), 400
+
 @app.route("/api/detection", methods=["POST"])
 def handle_detection():
     data = request.json
@@ -281,7 +342,7 @@ def handle_detection():
                 if status == 'offline':
                     db["Employee"].update_one(
                         {"_id": emp_id},
-                        {"$set": {"status": 'offline', "compliance": 0, "location": "Pendente", "lastCheck": "Pendente"}}
+                        {"$set": {"status": 'offline', "compliance": 0, "location": "Pendente", "lastCheck": "Pendente", "lastHeartbeat": None}}
                     )
                     print(f"🔌 Sessão encerrada para: {employee_name} (Conformidade setada para 0%)")
                     return jsonify({"success": True})
@@ -339,6 +400,7 @@ def handle_detection():
                         "compliance": rounded_compliance,
                         "location": location or employee.get("location"),
                         "lastCheck": check_time,
+                        "lastHeartbeat": datetime.utcnow(),
                         "xp": new_xp,
                         "level": new_level,
                         "streak": new_streak,
@@ -672,6 +734,7 @@ def handle_disconnect():
                     "compliance": 0,
                     "location": "Pendente",
                     "lastCheck": "Pendente",
+                    "lastHeartbeat": None,
                 }}
             )
             print(f"🔌 Logout automático (Browser Fechado) para o funcionário ID: {employee_id}")

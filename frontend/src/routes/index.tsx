@@ -294,6 +294,25 @@ function Index() {
     }
   }, [step, selectedEpis]);
 
+  useEffect(() => {
+    if (step === "monitoring" && userData.name) {
+      const sendHeartbeat = () => {
+        fetch(`${BACKEND_URL}/api/heartbeat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            employeeName: userData.name,
+            employeeId: userData.id,
+          }),
+        }).catch(() => {});
+      };
+
+      sendHeartbeat();
+      const heartbeatInterval = setInterval(sendHeartbeat, 3000);
+      return () => clearInterval(heartbeatInterval);
+    }
+  }, [step, userData.name, userData.id, BACKEND_URL]);
+
   const handleLoginStart = () => {
     setStep("login");
   };

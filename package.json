@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run front\" \"npm run back\"",
     "front": "cd frontend && npm run dev",
-    "back": "cd backend && python app.py"
+    "back": "cd backend && python3 app.py"
   },
   "keywords": [],
   "author": "",
