@@ -20,6 +20,7 @@ import { EmployeeSelection } from "@/components/terminal/EmployeeSelection";
 import { FaceRegistration } from "@/components/terminal/FaceRegistration";
 import { EpiSelection } from "@/components/terminal/EpiSelection";
 import { LocationRegistration } from "@/components/terminal/LocationRegistration";
+import { EpiMannequinAlert } from "@/components/terminal/EpiMannequinAlert";
 import WebcamDetection, { WebcamDetectionHandle,socket } from "@/components/WebcamDetection";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
@@ -67,6 +68,17 @@ function Index() {
   const [monitoringProgress, setMonitoringProgress] = useState(0);
   const [history, setHistory] = useState<Record<string, boolean>[]>([]);
   const [totalSeconds, setTotalSeconds] = useState(0);
+
+  // Rastreamento de tempo sem determinado EPI (alerta visual de boneco > 10s)
+  const [violationSeconds, setViolationSeconds] = useState<Record<string, number>>({});
+  const lastSeenAtRef = useRef<Record<string, number>>({});
+  const sessionStartRef = useRef<number>(0);
+  const detectionsRef = useRef<Detection[]>([]);
+
+  // Mantém detectionsRef sempre atualizado sem re-renderizar timers
+  useEffect(() => {
+    detectionsRef.current = detections;
+  }, [detections]);
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5001";
 
@@ -170,6 +182,9 @@ function Index() {
     setMonitoringProgress(0);
     setHistory([]);
     setTotalSeconds(0);
+    setViolationSeconds({});
+    lastSeenAtRef.current = {};
+    sessionStartRef.current = 0;
     violationSnapshotRef.current = null;
   };
 
@@ -198,6 +213,69 @@ function Index() {
     },
     [detections],
   );
+
+  // Inicializa a sessão de monitoramento e timestamps dos EPIs
+  useEffect(() => {
+    if (step === "monitoring" && selectedEpis.length > 0) {
+      const now = Date.now();
+      sessionStartRef.current = now;
+      const initialLastSeen: Record<string, number> = {};
+      selectedEpis.forEach((epiId) => {
+        initialLastSeen[epiId] = now;
+      });
+      lastSeenAtRef.current = initialLastSeen;
+      setViolationSeconds({});
+    } else if (step !== "monitoring") {
+      lastSeenAtRef.current = {};
+      sessionStartRef.current = 0;
+      setViolationSeconds({});
+    }
+  }, [step, selectedEpis]);
+
+  // 🔥 Rastreamento contínuo e estável de tempo sem determinado EPI (alerta de 10s)
+  useEffect(() => {
+    if (step !== "monitoring" || selectedEpis.length === 0) return;
+
+    const checkViolations = () => {
+      const now = Date.now();
+      const currentDetections = detectionsRef.current;
+      const updatedSecs: Record<string, number> = {};
+
+      selectedEpis.forEach((epiId) => {
+        const isPresent = currentDetections.some((d) => {
+          const label = norm(d.label);
+          const hasNo = label.includes("no_") || label.includes("sem_");
+          if (epiId === "helmet") return (label.includes("capacete") || label.includes("helmet")) && !hasNo;
+          if (epiId === "vest") return (label.includes("macacao") || label.includes("vest") || label.includes("colete")) && !hasNo;
+          if (epiId === "mask") return (label.includes("mascara") || label.includes("mask")) && !hasNo;
+          if (epiId === "glasses") return (label.includes("oculos") || label.includes("glasses")) && !hasNo;
+          if (epiId === "gloves") return (label.includes("luva") || label.includes("glove")) && !hasNo;
+          if (epiId === "boots") return (label.includes("bota") || label.includes("boot") || label.includes("sapato")) && !hasNo;
+          return false;
+        });
+
+        if (isPresent) {
+          lastSeenAtRef.current[epiId] = now;
+          updatedSecs[epiId] = 0;
+        } else {
+          const lastSeen = lastSeenAtRef.current[epiId] ?? sessionStartRef.current ?? now;
+          const elapsed = Math.floor((now - lastSeen) / 1000);
+          updatedSecs[epiId] = Math.max(0, elapsed);
+        }
+      });
+
+      setViolationSeconds(updatedSecs);
+    };
+
+    // Executa a cada 300ms de forma desacoplada dos frames da câmera
+    const interval = setInterval(checkViolations, 300);
+    return () => clearInterval(interval);
+  }, [step, selectedEpis]);
+
+  const alertEpis = selectedEpis.filter((epiId) => (violationSeconds[epiId] || 0) >= 10);
+  const hasPersistentAlert = alertEpis.length > 0;
+
+
 
   const calculateFinalAverage = useCallback(async () => {
     if (history.length === 0) return;
@@ -479,9 +557,6 @@ function Index() {
                 <div className="text-sm font-semibold tracking-wide">
                   Secur<span className="text-primary">IT</span>
                 </div>
-                <div className="text-xs text-muted-foreground uppercase tracking-tighter">
-                  Módulo Terminal · {step.replace("-", " ")}
-                </div>
               </div>
             </div>
 
@@ -560,6 +635,16 @@ function Index() {
 
                 {/* Status Lateral */}
                 <div className="space-y-6">
+                  {/* 🔥 Boneco Ilustrado de Alerta de EPI (> 10s sem uso) */}
+                  {hasPersistentAlert && (
+                    <EpiMannequinAlert
+                      selectedEpis={selectedEpis}
+                      violationSeconds={violationSeconds}
+                      alertEpis={alertEpis}
+                      compact={false}
+                    />
+                  )}
+
                   <div
                     className={`p-6 rounded-2xl border-2 flex flex-col items-center text-center gap-3 ${
                       selectedEpis.every((e) => getEpiStatus(e))
@@ -622,10 +707,7 @@ function Index() {
           </div>
 
           {/* FOOTER */}
-          <footer className="flex items-center justify-between px-8 py-4 border-t border-border bg-card/20">
-            <div className="text-xs text-muted-foreground">
-              ID Terminal: <span className="font-mono">T-SA-04-26</span>
-            </div>
+          <footer className="flex items-center justify-end px-8 py-4 border-t border-border bg-card/20">
             <div className="flex gap-4">
               {step === "monitoring" && (
                 <button

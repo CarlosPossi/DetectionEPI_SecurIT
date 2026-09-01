@@ -102,3 +102,19 @@
     letter-spacing: -0.01em;
   }
 }
+
+@keyframes alert-blink {
+  0%, 100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.95));
+  }
+  50% {
+    opacity: 0.2;
+    filter: drop-shadow(0 0 2px rgba(239, 68, 68, 0.2));
+  }
+}
+
+.animate-alert-blink {
+  animation: alert-blink 0.75s ease-in-out infinite;
+}
+
