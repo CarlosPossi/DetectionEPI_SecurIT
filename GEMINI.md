@@ -56,6 +56,7 @@ Ele conecta o operador na ponta (chão de fábrica) ao banco de dados compartilh
 * **`src/routes/index.tsx`**: Orquestrador principal do terminal (máquina de estados do totem). Gerencia o fluxo entre `entry`, `login`, `employee-select`, `face-registration`, `location` e `monitoring`.
 * **`src/components/WebcamDetection.tsx`**: Componente da câmera webcam que realiza a captura de quadros e estabelece o Socket.IO com o servidor Python.
 * **`src/components/terminal/`**:
+  * **`EpiMannequinAlert.tsx`**: Manequim corporal ilustrado em SVG com camadas para cada EPI. Exibido na lateral quando o operador fica ≥ 10s sem EPI, piscando as partes faltantes em vermelho.
   * **`FacialLogin.tsx`**: Interface de leitura e verificação biométrica.
   * **`FaceRegistration.tsx`**: Tela de cadastro de novos rostos.
   * **`EmployeeSelection.tsx`**: Seleção manual de funcionário.
@@ -110,6 +111,15 @@ Ele conecta o operador na ponta (chão de fábrica) ao banco de dados compartilh
 
 ### 🛑 Regra 4: Deduplicação Temporal de 10 Segundos
 * O backend Flask inspeciona a coleção `Activity`. Se já existir uma gravação para aquele funcionário nos últimos **10 segundos**, o evento é considerado duplicado e ignorado.
+
+### 🪖 Regra 5: Alerta Visual do Boneco/Manequim (> 10s Seguidos Sem EPI)
+* O frontend realiza rastreamento temporal contínuo e desacoplado dos frames da webcam (`lastSeenAtRef` + timer de 300ms) para cada EPI exigido pelo setor.
+* **Comportamento**:
+  * Se o funcionário permanecer **mais de 10 segundos contínuos sem 1 ou mais EPIs**:
+    * O componente `EpiMannequinAlert` aparece no painel lateral direito do totem.
+    * A(s) parte(s) correspondente(s) aos EPIs faltantes (capacete, óculos, máscara, colete, luvas, botas) fica(m) **piscando em vermelho vivo** com a animação `.animate-alert-blink` e efeito de brilho (*glow*).
+    * Suporta múltiplos EPIs faltantes simultaneamente (todas as partes com ≥ 10s piscam juntas).
+  * **Normalização**: Quando o funcionário coloca o EPI correto, o contador daquele item é zerado e a parte no boneco volta ao estado normal. Quando todos os EPIs estiverem conformes, o boneco desaparece automaticamente.
 
 ---
 
