@@ -10,7 +10,8 @@ import {
   AlertCircle,
   Timer,
   XCircle,
-  BadgeCheck
+  BadgeCheck,
+  Cpu
 } from "lucide-react";
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -19,7 +20,8 @@ import { FacialLogin } from "@/components/terminal/FacialLogin";
 import { EmployeeSelection } from "@/components/terminal/EmployeeSelection";
 import { FaceRegistration } from "@/components/terminal/FaceRegistration";
 import { EpiSelection } from "@/components/terminal/EpiSelection";
-import { LocationRegistration } from "@/components/terminal/LocationRegistration";
+import { LocationRegistration, Sector, Machine } from "@/components/terminal/LocationRegistration";
+import { MachineSelection } from "@/components/terminal/MachineSelection";
 import { EpiMannequinAlert } from "@/components/terminal/EpiMannequinAlert";
 import WebcamDetection, { WebcamDetectionHandle,socket } from "@/components/WebcamDetection";
 import { Progress } from "@/components/ui/progress";
@@ -31,14 +33,7 @@ type Detection = {
   conf: number;
 };
 
-interface Sector {
-  id: string;
-  name: string;
-  description?: string;
-  requiredEPIs: string[];
-}
-
-type TerminalStep = "entry" | "login" | "employee-select" | "face-registration" | "epi-setup" | "location" | "monitoring";
+type TerminalStep = "entry" | "login" | "employee-select" | "face-registration" | "epi-setup" | "location" | "machine" | "monitoring";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -50,7 +45,9 @@ function Index() {
   const [userData, setUserData] = useState({ id: "", name: "" });
   const [isManualSelection, setIsManualSelection] = useState(false);
   const [selectedEpis, setSelectedEpis] = useState<string[]>([]);
+  const [currentSector, setCurrentSector] = useState<Sector | null>(null);
   const [location, setLocation] = useState("");
+  const [machine, setMachine] = useState("");
   const [checkInTime, setCheckInTime] = useState("");
 
   const [systemStatus, setSystemStatus] = useState({
@@ -178,7 +175,9 @@ function Index() {
     setStep("entry");
     setUserData({ id: "", name: "" });
     setSelectedEpis([]);
+    setCurrentSector(null);
     setLocation("");
+    setMachine("");
     setMonitoringProgress(0);
     setHistory([]);
     setTotalSeconds(0);
@@ -303,6 +302,7 @@ function Index() {
       const payload = {
         employeeName: userData.name,
         location: location,
+        machine: machine,
         status: isCompliant ? 'ok' : 'danger',
         compliance: overallCompliance * 100,
         episOk,
@@ -336,7 +336,7 @@ function Index() {
     setMonitoringProgress(0);
     setHistory([]);
     violationSnapshotRef.current = null;
-  }, [history, userData.name, location, selectedEpis, BACKEND_URL]);
+  }, [history, userData.name, location, machine, selectedEpis, BACKEND_URL]);
 
   useEffect(() => {
     if (step === "monitoring") {
@@ -463,27 +463,16 @@ function Index() {
     setStep("location");
   };
 
-  const handleLocationConfirm = async (sector: Sector) => {
-    const loc = sector.name;
-    setLocation(loc);
-    
-    // 🔥 Configura os EPIs automaticamente com base no setor
-    if (sector.requiredEPIs && sector.requiredEPIs.length > 0) {
-      setSelectedEpis(sector.requiredEPIs);
-      // Sem toasts de config de EPIs
-    }
-
+  const completeCheckIn = async (loc: string, mac: string) => {
     const now = new Date().toLocaleTimeString("pt-BR", {
       hour: "2-digit",
       minute: "2-digit",
     });
     setCheckInTime(now);
     setStep("monitoring");
-    // Sem toast de início de monitoramento
-
 
     // 🔥 Envio imediato do Check-in para o Dashboard
-    console.log("📤 Enviando Check-in:", { employeeName: userData.name, location: loc, checkIn: now });
+    console.log("📤 Enviando Check-in:", { employeeName: userData.name, location: loc, machine: mac, checkIn: now });
     try {
       await fetch(`${BACKEND_URL}/api/detection`, {
         method: 'POST',
@@ -491,9 +480,11 @@ function Index() {
         body: JSON.stringify({
           employeeName: userData.name,
           location: loc,
+          machine: mac || null,
           status: 'ok', 
           compliance: 100, 
           checkIn: now,
+          isCheckIn: true,
           alerts: [],
           images: []
         })
@@ -502,6 +493,32 @@ function Index() {
     } catch (error) {
       console.error("❌ Falha ao enviar Check-in:", error);
     }
+  };
+
+  const handleLocationConfirm = (sector: Sector) => {
+    setCurrentSector(sector);
+    const loc = sector.name;
+    setLocation(loc);
+    
+    // 🔥 Configura os EPIs automaticamente com base no setor
+    if (sector.requiredEPIs && sector.requiredEPIs.length > 0) {
+      setSelectedEpis(sector.requiredEPIs);
+    }
+
+    // Se o setor possuir máquinas cadastradas, vai para a tela de máquinas
+    if (sector.machines && sector.machines.length > 0) {
+      setStep("machine");
+    } else {
+      // Setor sem máquinas cadastradas: finaliza check-in direto
+      setMachine("");
+      completeCheckIn(loc, "");
+    }
+  };
+
+  const handleMachineConfirm = (selectedMachine: string) => {
+    setMachine(selectedMachine);
+    const loc = currentSector?.name || location;
+    completeCheckIn(loc, selectedMachine);
   };
 
   const handleEndSession = async () => {
@@ -513,11 +530,13 @@ function Index() {
           employeeName: userData.name,
           status: 'offline', 
           location: "Pendente",
+          machine: null,
           alerts: [],
           images: []
         })
       });
       toast.success("Sessão encerrada com sucesso.");
+      setMachine("");
       restart();
     } catch (error) {
       console.error("Erro ao encerrar sessão:", error);
@@ -571,6 +590,11 @@ function Index() {
                   <MapPin className="h-3 w-3" /> {location}
                 </div>
               )}
+              {machine && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-primary/10 text-primary rounded-full text-xs font-medium border border-primary/20">
+                  <Cpu className="h-3 w-3" /> {machine}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2 text-xs">
@@ -613,6 +637,15 @@ function Index() {
             )}
 
             {step === "location" && <LocationRegistration onConfirm={handleLocationConfirm} />}
+
+            {step === "machine" && currentSector && (
+              <MachineSelection
+                sectorName={currentSector.name}
+                machines={currentSector.machines || []}
+                onConfirm={handleMachineConfirm}
+                onBack={() => setStep("location")}
+              />
+            )}
 
             {step === "monitoring" && (
               <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-8">

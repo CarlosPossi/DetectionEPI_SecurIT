@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run front\" \"npm run back\"",
     "front": "cd frontend && npm run dev",
-    "back": "cd backend && python3 app.py"
+    "back": "cd backend && (if [ -f venv/bin/python ]; then exec venv/bin/python app.py; elif [ -f venv/Scripts/python.exe ]; then exec venv/Scripts/python.exe app.py; else exec python3 app.py; fi)"
   },
   "keywords": [],
   "author": "",

@@ -130,8 +130,22 @@ if hasattr(signal, "SIGHUP"):
     signal.signal(signal.SIGHUP, signal_handler)
 
 def serialize_doc(doc):
-    if not doc: return None
-    doc["id"] = str(doc.pop("_id"))
+    if doc is None:
+        return None
+    if isinstance(doc, ObjectId):
+        return str(doc)
+    if isinstance(doc, datetime):
+        return doc.isoformat()
+    if isinstance(doc, list):
+        return [serialize_doc(item) for item in doc]
+    if isinstance(doc, dict):
+        new_doc = {}
+        for k, v in doc.items():
+            if k == "_id":
+                new_doc["id"] = str(v)
+            else:
+                new_doc[k] = serialize_doc(v)
+        return new_doc
     return doc
 
 def cosine_distance(a, b):
@@ -213,6 +227,17 @@ def api_get_sectors():
             db["Sector"].insert_many(default_sectors)
             sectors = list(db["Sector"].find({}).sort("name", 1))
             
+        # Attach machines for each sector
+        for s in sectors:
+            sector_raw_id = s["_id"]
+            machines = list(db["Machine"].find({
+                "$or": [
+                    {"sectorId": sector_raw_id},
+                    {"sectorId": str(sector_raw_id)}
+                ]
+            }).sort("name", 1))
+            s["machines"] = [serialize_doc(m) for m in machines]
+
         serialized = [serialize_doc(s) for s in sectors]
         return jsonify(serialized)
     except Exception as e:
@@ -287,6 +312,7 @@ def handle_detection():
     try:
         employee_name = data.get("employeeName")
         location = data.get("location")
+        machine = data.get("machine")
         status = data.get("status")
         compliance = data.get("compliance")
         check_in = data.get("checkIn")
@@ -342,7 +368,7 @@ def handle_detection():
                 if status == 'offline':
                     db["Employee"].update_one(
                         {"_id": emp_id},
-                        {"$set": {"status": 'offline', "compliance": 0, "location": "Pendente", "lastCheck": "Pendente", "lastHeartbeat": None}}
+                        {"$set": {"status": 'offline', "compliance": 0, "location": "Pendente", "machine": None, "lastCheck": "Pendente", "lastHeartbeat": None}}
                     )
                     print(f"🔌 Sessão encerrada para: {employee_name} (Conformidade setada para 0%)")
                     return jsonify({"success": True})
@@ -392,6 +418,9 @@ def handle_detection():
 
                 new_level = (new_xp // 100) + 1
 
+                # Machine resolution
+                assigned_machine = machine or employee.get("machine")
+
                 # Update Employee
                 db["Employee"].update_one(
                     {"_id": emp_id},
@@ -399,6 +428,7 @@ def handle_detection():
                         "status": 'alert' if status == 'danger' else 'ok',
                         "compliance": rounded_compliance,
                         "location": location or employee.get("location"),
+                        "machine": assigned_machine,
                         "lastCheck": check_time,
                         "lastHeartbeat": datetime.utcnow(),
                         "xp": new_xp,
@@ -410,11 +440,13 @@ def handle_detection():
                 )
 
                 # Create Activity
+                checkin_title = f"EPI Verificado (Check-in) {assigned_machine}" if assigned_machine else "EPI Verificado (Check-in)"
                 new_activity = {
                     "type": 'alert' if status == 'danger' else 'check',
-                    "title": "EPI Verificado (Check-in)" if is_check_in else (f"EPI Verificado (+10 XP)" if is_compliant else (f"Violação: {', '.join(alerts)}" if status == 'danger' else "EPI Verificado (< 80%)")),
+                    "title": checkin_title if is_check_in else (f"EPI Verificado (+10 XP)" if is_compliant else (f"Violação: {', '.join(alerts)}" if status == 'danger' else "EPI Verificado (< 80%)")),
                     "time": datetime.now().strftime("%H:%M"),
                     "location": location or employee.get("location"),
+                    "machine": assigned_machine,
                     "status": 'alert' if status == 'danger' else 'ok',
                     "compliance": rounded_compliance,
                     "episOk": epis_ok,
