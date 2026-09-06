@@ -24,23 +24,23 @@ O **DetectionEPI_SecurIT** é o Totem de Entrada e Terminal de Inspeção Biomé
 Ele conecta o operador na ponta (chão de fábrica) ao banco de dados compartilhado MongoDB (`securit_db`) e sincroniza dados em tempo real com o Dashboard central **SPI_Challenge**:
 
 ```
- ┌─────────────────────────────────────────────────────────────────────────┐
- │                      DetectionEPI Frontend (React 18)                   │
- │ (Autenticação Facial -> Seleção de Setor -> Stream da Câmera -> Totem) │
- └────────────────────────────────────┬────────────────────────────────────┘
-                                      │ WebSockets (Socket.IO) & REST
-                                      ▼
- ┌─────────────────────────────────────────────────────────────────────────┐
- │                      DetectionEPI Backend (Flask 5001)                  │
- │ (DeepFace VGG-Face + YOLO custom deteccaoepi.pt + ESP32 Trigger)       │
- └──────────────────┬──────────────────────────────────────┬───────────────┘
-                    │                                      │
-                    │ PyMongo                              │ HTTP POST Forward
-                    ▼                                      ▼
- ┌────────────────────────────────────┐  ┌─────────────────────────────────┐
- │   MongoDB Shared (securit_db)      │  │   SPI_Challenge Dashboard       │
- │   (Employee, Activity, Alert)      │  │   (Next.js App Router 3000)     │
- └────────────────────────────────────┘  └─────────────────────────────────┘
+ ┌────────────────────────────────────────────────────────────────────────────────────────┐
+ │                           DetectionEPI Frontend (React 18)                             │
+ │ (Autenticação Facial -> Seleção de Setor -> Seleção de Máquina -> Totem de Monitoria)  │
+ └──────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                            │ WebSockets (Socket.IO) & REST
+                                            ▼
+ ┌────────────────────────────────────────────────────────────────────────────────────────┐
+ │                           DetectionEPI Backend (Flask 5001)                            │
+ │ (DeepFace VGG-Face + YOLO custom deteccaoepi.pt + ESP32 Trigger + Sync Setores/Máquinas)│
+ └──────────────────────┬──────────────────────────────────────┬──────────────────────────┘
+                        │                                      │
+                        │ PyMongo                              │ HTTP POST Forward
+                        ▼                                      ▼
+ ┌────────────────────────────────────────┐  ┌─────────────────────────────────┐
+ │       MongoDB Shared (securit_db)      │  │   SPI_Challenge Dashboard       │
+ │ (Employee, Sector, Machine, Activity)  │  │   (Next.js App Router 3000)     │
+ └────────────────────────────────────────┘  └─────────────────────────────────┘
 ```
 
 ---
@@ -48,19 +48,20 @@ Ele conecta o operador na ponta (chão de fábrica) ao banco de dados compartilh
 ## 2. Estrutura de Pastas e Componentes
 
 ### Backend (`/backend`)
-* **`app.py`**: Aplicação principal Flask + Socket.IO. Contém endpoints REST, manipuladores de Socket.IO, conexão PyMongo e lógica de acionamento do ESP32.
+* **`app.py`**: Aplicação principal Flask + Socket.IO. Contém endpoints REST, manipuladores de Socket.IO, conexão PyMongo (com agregação de máquinas por setor) e lógica de acionamento do ESP32.
 * **`deteccaoepi.pt`**: Modelo PyTorch treinado sob medida no Ultralytics YOLOv8 (~120 MB) para detecção de capacetes, coletes, luvas, óculos, máscaras e botas.
 * **`db_debug.py`**: Script utilitário para checagem rápida da conexão MongoDB.
 
 ### Frontend (`/frontend`)
-* **`src/routes/index.tsx`**: Orquestrador principal do terminal (máquina de estados do totem). Gerencia o fluxo entre `entry`, `login`, `employee-select`, `face-registration`, `location` e `monitoring`.
+* **`src/routes/index.tsx`**: Orquestrador principal do terminal (máquina de estados do totem). Gerencia o fluxo sequencial: `entry` -> `login` -> `employee-select` -> `face-registration` -> `location` (setor) -> `machine` (máquina) -> `monitoring`.
 * **`src/components/WebcamDetection.tsx`**: Componente da câmera webcam que realiza a captura de quadros e estabelece o Socket.IO com o servidor Python.
 * **`src/components/terminal/`**:
-  * **`EpiMannequinAlert.tsx`**: Manequim corporal ilustrado em SVG com camadas para cada EPI. Exibido na lateral quando o operador fica ≥ 10s sem EPI, piscando as partes faltantes em vermelho.
+  * **`LocationRegistration.tsx`**: Seleção exclusiva do setor de atuação do operador.
+  * **`MachineSelection.tsx`**: Tela dedicada para seleção da máquina vinculada ao setor escolhido antes de entrar em monitoramento.
+  * **`EpiMannequinAlert.tsx`**: Manequim corporal ilustrado em SVG com camadas para cada EPI. Exibido na lateral estritamente quando o operador fica ≥ 10s sem EPI, piscando as partes faltantes em vermelho.
   * **`FacialLogin.tsx`**: Interface de leitura e verificação biométrica.
   * **`FaceRegistration.tsx`**: Tela de cadastro de novos rostos.
   * **`EmployeeSelection.tsx`**: Seleção manual de funcionário.
-  * **`LocationRegistration.tsx`**: Seleção de setor/localização de trabalho do turno.
   * **`TerminalEntry.tsx`**: Tela inicial de boas-vindas do totem.
 
 ---
@@ -96,9 +97,15 @@ Ele conecta o operador na ponta (chão de fábrica) ao banco de dados compartilh
 
 ## 5. Regras de Negócio e Gamificação de EPIs
 
-### 🎮 Regra 1: Check-in Inicial Sem Concessão de XP
-* O evento de finalização da tela de localização envia o payload com `checkIn: time`.
-* **Comportamento**: Registra o horário de início do turno, ajusta o status para `online`, mas **NÃO SOMA NENHUM XP** (`xpGained = 0`). A atividade é gravada com o título `"EPI Verificado (Check-in)"`.
+### 🎮 Regra 1: Check-in Inicial com Setor e Máquina (Sem Concessão de XP)
+* O fluxo de autenticação facial avança para a seleção de **Setor** (`LocationRegistration.tsx`) e em seguida para a seleção de **Máquina** (`MachineSelection.tsx`).
+* Ao confirmar a máquina, o evento de check-in envia o payload com `checkIn: time`, `location: sector` e `machine: selectedMachine`.
+* **Comportamento**:
+  * Registra o horário de início do turno, ajusta o status para `online`, grava o setor em `Employee.location` e a máquina em `Employee.machine`.
+  * **NÃO SOMA NENHUM XP** (`xpGained = 0`).
+  * A atividade é gravada no MongoDB com o título formatado:
+    * Se houver máquina: `"EPI Verificado (Check-in) [Nome da Máquina]"` (ex: `"EPI Verificado (Check-in) Maquina 1"`).
+    * Se não houver máquina: `"EPI Verificado (Check-in)"`.
 
 ### 🎯 Regra 2: Ciclos de 1 Minuto e Ganho de XP
 * Durante o passo de `monitoring`, o frontend acumula amostras segundo a segundo em `history`.
@@ -106,8 +113,14 @@ Ele conecta o operador na ponta (chão de fábrica) ao banco de dados compartilh
   * Se a média ponderada do ciclo for **≥ 80%**: Notifica o backend e exibe o toast de comemoração no totem (`🎉 +10 XP conquistados!`). O saldo de XP no MongoDB é incrementado em **estritamente +10 XP**.
   * Se a média for **< 80%**: Exibe toast informativo (`⚠️ Ciclo encerrado com X% de conformidade. Mantenha ≥ 80% para ganhar +10 XP!`), reseta a sequência (`streak = 0`) e concede **0 XP**.
 
-### 🔌 Regra 3: Status Offline = 0% de Conformidade
-* Sempre que uma sessão for encerrada por logout manual ou desconexão do navegador, o backend atualiza o documento `Employee` no MongoDB setando **`status = 'offline'`** e **`compliance = 0`**.
+### 🔌 Regra 3: Status Offline = 0% de Conformidade e Desvinculação de Máquina
+* Sempre que uma sessão for encerrada por logout manual ou desconexão do navegador, o backend atualiza o documento `Employee` no MongoDB setando:
+  * **`status = 'offline'`**
+  * **`compliance = 0`**
+  * **`location = 'Pendente'`**
+  * **`machine = None`**
+  * **`lastCheck = 'Pendente'`**
+  * **`lastHeartbeat = None`**
 
 ### 🛑 Regra 4: Deduplicação Temporal de 10 Segundos
 * O backend Flask inspeciona a coleção `Activity`. Se já existir uma gravação para aquele funcionário nos últimos **10 segundos**, o evento é considerado duplicado e ignorado.
@@ -115,11 +128,11 @@ Ele conecta o operador na ponta (chão de fábrica) ao banco de dados compartilh
 ### 🪖 Regra 5: Alerta Visual do Boneco/Manequim (> 10s Seguidos Sem EPI)
 * O frontend realiza rastreamento temporal contínuo e desacoplado dos frames da webcam (`lastSeenAtRef` + timer de 300ms) para cada EPI exigido pelo setor.
 * **Comportamento**:
-  * Se o funcionário permanecer **mais de 10 segundos contínuos sem 1 ou mais EPIs**:
-    * O componente `EpiMannequinAlert` aparece no painel lateral direito do totem.
-    * A(s) parte(s) correspondente(s) aos EPIs faltantes (capacete, óculos, máscara, colete, luvas, botas) fica(m) **piscando em vermelho vivo** com a animação `.animate-alert-blink` e efeito de brilho (*glow*).
-    * Suporta múltiplos EPIs faltantes simultaneamente (todas as partes com ≥ 10s piscam juntas).
-  * **Normalização**: Quando o funcionário coloca o EPI correto, o contador daquele item é zerado e a parte no boneco volta ao estado normal. Quando todos os EPIs estiverem conformes, o boneco desaparece automaticamente.
+  * O boneco **só é exibido** se o funcionário permanecer **mais de 10 segundos contínuos sem 1 ou mais EPIs obrigatórios** (`hasPersistentAlert = true`).
+  * O componente `EpiMannequinAlert` aparece no painel lateral direito do totem.
+  * A(s) parte(s) correspondente(s) aos EPIs faltantes (capacete, óculos, máscara, colete, luvas, botas) fica(m) **piscando em vermelho vivo** com a animação `.animate-alert-blink` e efeito de brilho (*glow*).
+  * Suporta múltiplos EPIs faltantes simultaneamente (todas as partes com ≥ 10s piscam juntas).
+  * **Normalização**: Quando o funcionário coloca o EPI correto, o contador daquele item é zerado. Quando todos os EPIs estiverem conformes, o boneco **desaparece imediatamente da tela**.
 
 ---
 
@@ -136,7 +149,8 @@ O backend Python comunica-se com um módulo microcontrolador ESP32 na rede local
 
 O backend conecta-se via `pymongo.MongoClient(os.getenv("DATABASE_URL"))` ao mesmo banco de dados do `SPI_Challenge`:
 
-* **`Employee`**: Leitura de dados, gravação de `faceEncoding`, atualização de status (`online`/`offline`), localização, conformidade, `xp`, `level`, `streak`, `totalChecks` e `compliantChecks`.
-* **`Activity`**: Inserção de históricos de check-in e ciclos de monitoramento.
+* **`Employee`**: Leitura de dados, gravação de `faceEncoding`, atualização de status (`online`/`offline`), `location`, `machine`, conformidade, `xp`, `level`, `streak`, `totalChecks` e `compliantChecks`.
+* **`Sector`**: Leitura de setores e agregação com suas máquinas cadastradas para alimentar a interface do totem.
+* **`Machine`**: Leitura das máquinas vinculadas aos setores via `sectorId`.
+* **`Activity`**: Inserção de históricos de check-in (com indicação da máquina operada) e ciclos de monitoramento.
 * **`Alert`**: Inserção de infrações críticas com Base64 da imagem para exibição imediata no Dashboard central.
-* **`Sector`**: Leitura de setores e seus EPIs obrigatórios configurados.
